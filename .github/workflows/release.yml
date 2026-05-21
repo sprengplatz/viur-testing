@@ -1,0 +1,126 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+      - "v[0-9]+.[0-9]+.[0-9]+-*"   # pre-release tags like v1.0.0-rc1
+
+permissions:
+  contents: write
+
+jobs:
+  # ----- Gate 1: full test matrix must pass ---------------------------------
+  test:
+    name: Test (Python ${{ matrix.python }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.12", "3.13"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install (skip viur-core runtime dep — mocked by viur-light-mock)
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install --no-deps -e .
+          python -m pip install pytest pytest-cov 'coverage[toml]' viur-light-mock
+
+      - name: Tests
+        run: pytest
+
+  # ----- Gate 2: docs must build cleanly in strict mode ---------------------
+  docs:
+    name: Docs build (strict)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install --no-deps -e .
+          python -m pip install mkdocs-material 'mkdocstrings[python]'
+
+      - name: Build (strict)
+        run: mkdocs build --strict
+
+  # ----- Verify the tag matches the version in __init__.py ------------------
+  version-check:
+    name: Tag vs. package version
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Compare
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          PKG=$(python -c "import re; t=open('src/viur/testing/__init__.py').read(); print(re.search(r'__version__ = [\"\\'']([^\"\\'']+)[\"\\'']', t).group(1))")
+          echo "Tag version:     $TAG"
+          echo "Package version: $PKG"
+          if [ "$TAG" != "$PKG" ]; then
+            echo "::error::Tag ($TAG) does not match __version__ ($PKG)"
+            exit 1
+          fi
+
+  # ----- Final step: build dist + cut GitHub Release ------------------------
+  release:
+    name: Build and publish GitHub Release
+    needs: [test, docs, version-check]
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Build wheel + sdist
+        run: |
+          python -m pip install --upgrade pip build
+          python -m build
+
+      - name: Determine pre-release flag
+        id: prerelease
+        run: |
+          if [[ "${GITHUB_REF_NAME}" == *-* ]]; then
+            echo "value=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "value=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
+          generate_release_notes: true
+          prerelease: ${{ steps.prerelease.outputs.value }}
+          files: |
+            dist/*.whl
+            dist/*.tar.gz

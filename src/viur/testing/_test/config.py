@@ -1,0 +1,283 @@
+"""
+``viur.testing._test.config`` — the ``ConfigModule`` viur module + per-process state.
+
+Carries:
+
+- the **class-level state** that marks the running process as a test-mode
+  process and stores the session token (``_database``, ``_project_id``,
+  ``_token`` on :class:`ConfigModule`),
+- the **bootstrap endpoints** ``status`` (provisions the token in the
+  test database and hands it to the runner) and ``finish`` (deletes the
+  token entity, ending the session),
+- the **private helpers** that consult ``viur.core`` to verify runtime
+  consistency, build the datastore key, and read/write/delete the token
+  entity.
+
+State lives on the class — there is exactly one logical test session
+per process. :mod:`viur.testing.activation` sets the active state by
+calling :meth:`ConfigModule.set_active` after the datastore client
+swap; the request validator reads :meth:`ConfigModule.current_token`
+to decide whether to let a request through.
+"""
+
+import hashlib
+import json
+import secrets
+import typing as t
+
+from viur.core import Module, current
+from viur.core.decorators import exposed, force_post
+from viur.core.errors import Forbidden
+
+from ..constants import (
+    TOKEN_ENTITY_NAME,
+    TOKEN_KIND,
+    TOKEN_PROPERTY,
+)
+
+
+class ConfigModule(Module):
+    """Bootstrap configuration module mounted under ``/_test/config``.
+
+    Holds the per-process session state as class attributes and exposes
+    two endpoints:
+
+    - ``POST /_test/config/status`` — verify the runtime is consistent
+      (dev server + correct datastore database), then read or create
+      the session token entity in the test database and return it.
+      POST-only to block drive-by GETs from another browser tab on
+      the same machine (CORS preflight stops the cross-origin call).
+    - ``POST /_test/config/finish`` — verify the runtime, delete the
+      token entity, clear the in-process token.
+    """
+
+    handler = "config"
+    accessRights = None
+
+    # ----- mount guards -----------------------------------------------------
+
+    def __init__(
+        self,
+        moduleName: str = "config",
+        modulePath: str = "_test/config",
+        *args: t.Any,
+        **kwargs: t.Any,
+    ) -> None:
+        """Refuse to instantiate unless the runtime is in test mode.
+
+        Defense in depth: :class:`~viur.testing._test.TestModule` already
+        checks both conditions before constructing the container, but a
+        host project might bypass the container and mount ConfigModule
+        directly. The same two guards are repeated here so that a direct
+        mount cannot accidentally end up in production or run before
+        :func:`viur.testing.activate` has wired the datastore client.
+        """
+        from viur.core.config import conf  # noqa: PLC0415 — fresh lookup on each instantiation
+
+        if not getattr(conf.instance, "is_dev_server", False):
+            raise RuntimeError(
+                "viur-testing: ConfigModule refuses to instantiate outside a local "
+                "dev server. conf.instance.is_dev_server is False."
+            )
+        if type(self)._database is None:
+            raise RuntimeError(
+                "viur-testing: ConfigModule cannot mount because viur.testing.activate() "
+                "has not been called yet. Move the activate() call to the very top "
+                "of main.py, before the modules package is imported."
+            )
+        super().__init__(moduleName, modulePath, *args, **kwargs)
+
+    # ----- per-process state ------------------------------------------------
+
+    _database: t.ClassVar[str | None] = None
+    _project_id: t.ClassVar[str | None] = None
+    _token: t.ClassVar[str | None] = None
+
+    @classmethod
+    def is_active(cls) -> bool:
+        """Whether :func:`viur.testing.activate` has wired the process."""
+        return cls._database is not None
+
+    @classmethod
+    def has_token(cls) -> bool:
+        """Whether a session is currently established (a token is issued)."""
+        return cls._token is not None
+
+    @classmethod
+    def current_database(cls) -> str | None:
+        return cls._database
+
+    @classmethod
+    def current_project_id(cls) -> str | None:
+        return cls._project_id
+
+    @classmethod
+    def current_token(cls) -> str | None:
+        return cls._token
+
+    @classmethod
+    def current_token_hash(cls) -> str | None:
+        if cls._token is None:
+            return None
+        return hashlib.sha256(cls._token.encode("utf-8")).hexdigest()
+
+    @classmethod
+    def set_active(cls, *, database: str, project_id: str) -> None:
+        """Mark the process as test-mode active.
+
+        Idempotent for matching ``(database, project_id)``; refuses to
+        silently overwrite a mismatching prior activation.
+        """
+        if cls._database is None:
+            cls._database = database
+            cls._project_id = project_id
+            return
+        if cls._database != database or cls._project_id != project_id:
+            raise RuntimeError(
+                f"ConfigModule is already active for "
+                f"(database={cls._database!r}, project_id={cls._project_id!r}); "
+                f"refusing to switch to (database={database!r}, project_id={project_id!r})."
+            )
+
+    @classmethod
+    def set_token(cls, token: str) -> None:
+        """Record the current session token. Requires prior :meth:`set_active`."""
+        if cls._database is None:
+            raise RuntimeError("ConfigModule is not active; cannot set token.")
+        cls._token = token
+
+    @classmethod
+    def clear_token(cls) -> None:
+        """Drop the session token. Test-mode itself stays active."""
+        cls._token = None
+
+    @classmethod
+    def reset(cls) -> None:
+        """Clear all state. Intended for tests only."""
+        cls._database = None
+        cls._project_id = None
+        cls._token = None
+
+    # ----- private helpers --------------------------------------------------
+
+    @classmethod
+    def _require_runtime_consistency(cls) -> None:
+        """Re-verify dev-server + datastore database before any DB op.
+
+        Defense in depth: the endpoints are reachable without the token
+        header (whitelisted in the validator), so they must re-check
+        the environment themselves. A mismatch means the host has been
+        misconfigured or the activation step never ran.
+        """
+        from viur.core.config import conf  # noqa: PLC0415
+
+        if not getattr(conf.instance, "is_dev_server", False):
+            raise Forbidden("viur-test: server is not in dev mode")
+
+        if cls._database is None:
+            raise Forbidden("viur-test: activate() has not been called")
+
+        from viur.core.db import transport  # noqa: PLC0415
+
+        actual_db = getattr(transport.__client__, "database", None)
+        if actual_db != cls._database:
+            raise Forbidden(
+                f"viur-test: datastore client is on database={actual_db!r}, "
+                f"expected {cls._database!r}"
+            )
+
+    @classmethod
+    def _token_key(cls):
+        from viur.core.db import transport  # noqa: PLC0415
+        return transport.__client__.key(TOKEN_KIND, TOKEN_ENTITY_NAME)
+
+    @classmethod
+    def _read_or_create_token(cls) -> str:
+        """Return the token from the DB, creating it on first call."""
+        from google.cloud import datastore as gcds  # noqa: PLC0415
+        from viur.core.db import transport  # noqa: PLC0415
+
+        key = cls._token_key()
+        existing = transport.__client__.get(key)
+        if existing is not None and isinstance(existing.get(TOKEN_PROPERTY), str):
+            return existing[TOKEN_PROPERTY]
+
+        token = secrets.token_urlsafe(32)
+        entity = gcds.Entity(key=key)
+        entity[TOKEN_PROPERTY] = token
+        transport.__client__.put(entity)
+        return token
+
+    @classmethod
+    def _delete_token(cls) -> bool:
+        """Delete the token entity from the DB. ``True`` if one was present."""
+        from viur.core.db import transport  # noqa: PLC0415
+
+        key = cls._token_key()
+        existed = transport.__client__.get(key) is not None
+        transport.__client__.delete(key)
+        return existed
+
+    # ----- HTTP endpoints ---------------------------------------------------
+
+    @staticmethod
+    def _json_response(payload: dict) -> str:
+        """Serialise ``payload`` to JSON and set the response Content-Type.
+
+        viur-core endpoints return the response body as a *string* — a raw
+        ``dict`` would be coerced to ``str(payload)`` which is Python repr,
+        not JSON. Mirroring what
+        :class:`viur.core.render.json.default.DefaultRender` does: dump
+        explicitly and announce ``application/json``.
+        """
+        current.request.get().response.headers["Content-Type"] = "application/json"
+        return json.dumps(payload)
+
+    @exposed
+    @force_post
+    def status(self) -> str:
+        """Begin (or resume) a test session.
+
+        Reads the token entity from the test database; creates it on
+        first call. Updates the in-process state so the request
+        validator starts accepting the token. Returns the full session
+        info, including the token, to the runner.
+
+        POST-only on purpose: a third-party browser tab on the same
+        machine cannot issue a cross-origin POST without CORS preflight,
+        so it cannot drive-by trigger a session through this endpoint.
+        """
+        cls = type(self)
+        cls._require_runtime_consistency()
+        token = cls._read_or_create_token()
+        cls.set_token(token)
+
+        from viur.testing import __version__  # noqa: PLC0415
+
+        return self._json_response({
+            "test_mode": True,
+            "is_dev_server": True,
+            "database": cls._database,
+            "project_id": cls._project_id,
+            "token": token,
+            "token_hash": cls.current_token_hash(),
+            "version": __version__,
+        })
+
+    @exposed
+    @force_post
+    def finish(self) -> str:
+        """End the current test session.
+
+        Deletes the token entity from the test database and clears the
+        in-process token. Test-mode itself stays armed — the next call
+        to :meth:`status` will provision a fresh token.
+        """
+        cls = type(self)
+        cls._require_runtime_consistency()
+        existed = cls._delete_token()
+        cls.clear_token()
+        return self._json_response({"finished": True, "had_token": existed})
+
+
+__all__ = ["ConfigModule"]

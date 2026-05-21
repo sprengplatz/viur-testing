@@ -1,0 +1,38 @@
+# Build artifacts
+build/
+dist/
+*.egg-info/
+*.egg
+
+# Bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Test artifacts
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+.pytest_cache/
+.tox/
+
+# Type checking
+.mypy_cache/
+.pyright/
+.ruff_cache/
+
+# Docs
+site/
+
+# Editors
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# Virtual envs
+.venv/
+venv/
+env/

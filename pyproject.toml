@@ -1,0 +1,89 @@
+[build-system]
+requires = ["setuptools >= 61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "viur-testing"
+dynamic = ["version"]
+description = "Safe test-mode for ViUR core projects — Playwright e2e ready."
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.12"
+authors = [
+    { name = "Andreas H. Kelch" },
+]
+keywords = ["viur", "e2e", "testing", "playwright"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Framework :: ViUR",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+dependencies = [
+    "viur-core>=3.7,<4",
+]
+
+[project.optional-dependencies]
+test = [
+    "pytest~=8.0",
+    "pytest-cov~=5.0",
+    "coverage[toml]~=7.0",
+    "viur-light-mock>=0.1",
+]
+docs = [
+    "mkdocs-material~=9.5",
+    "mkdocstrings[python]~=0.26",
+]
+dev = [
+    "viur-testing[test,docs]",
+    "build~=1.2",
+]
+
+[project.urls]
+Homepage = "https://github.com/sprengplatz/viur-testing"
+Documentation = "https://sprengplatz.github.io/viur-testing/"
+Repository = "https://github.com/sprengplatz/viur-testing.git"
+"Bug Tracker" = "https://github.com/sprengplatz/viur-testing/issues"
+Changelog = "https://github.com/sprengplatz/viur-testing/blob/main/CHANGELOG.md"
+
+[tool.setuptools.dynamic]
+version = { attr = "viur.testing.__version__" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["viur.*"]
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+addopts = [
+    "-ra",
+    "--strict-markers",
+    "--strict-config",
+    "--cov=viur.testing",
+    "--cov-report=term-missing",
+    "--cov-report=xml",
+    "--cov-report=html",
+    "--cov-fail-under=100",
+]
+filterwarnings = [
+    "error",
+]
+
+[tool.coverage.run]
+branch = true
+source = ["viur.testing"]
+
+[tool.coverage.report]
+exclude_also = [
+    "raise NotImplementedError",
+    "if TYPE_CHECKING:",
+    "if t\\.TYPE_CHECKING:",
+    "\\.\\.\\.",
+]
+show_missing = true
+skip_covered = false
