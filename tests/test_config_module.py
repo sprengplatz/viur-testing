@@ -123,6 +123,7 @@ def test_is_active_false_initially():
     assert ConfigModule.is_active() is False
     assert ConfigModule.has_token() is False
     assert ConfigModule.current_database() is None
+    assert ConfigModule.current_namespace() is None
     assert ConfigModule.current_project_id() is None
     assert ConfigModule.current_token() is None
     assert ConfigModule.current_token_hash() is None
@@ -151,6 +152,27 @@ def test_set_active_refuses_different_project_id():
     ConfigModule.set_active(database="viur-tests", project_id="p")
     with pytest.raises(RuntimeError, match="refusing"):
         ConfigModule.set_active(database="viur-tests", project_id="other")
+
+
+def test_set_active_records_namespace():
+    ConfigModule.set_active(database="viur-tests", project_id="p", namespace="alice")
+    assert ConfigModule.current_namespace() == "alice"
+
+
+def test_set_active_idempotent_for_matching_namespace():
+    ConfigModule.set_active(database="viur-tests", project_id="p", namespace="alice")
+    ConfigModule.set_active(database="viur-tests", project_id="p", namespace="alice")
+
+
+def test_set_active_refuses_different_namespace():
+    ConfigModule.set_active(database="viur-tests", project_id="p", namespace="alice")
+    with pytest.raises(RuntimeError, match="refusing"):
+        ConfigModule.set_active(database="viur-tests", project_id="p", namespace="bob")
+
+
+def test_set_active_default_namespace_is_none():
+    ConfigModule.set_active(database="viur-tests", project_id="p")
+    assert ConfigModule.current_namespace() is None
 
 
 def test_set_token_requires_active_state():
@@ -198,6 +220,7 @@ def test_status_creates_token_on_first_call(client_active):
     assert result["test_mode"] is True
     assert result["is_dev_server"] is True
     assert result["database"] == "viur-tests"
+    assert result["namespace"] is None
     assert result["project_id"] == "proj-x"
     assert isinstance(result["token"], str) and len(result["token"]) >= 40
     assert result["version"] == viur.testing.__version__
@@ -209,6 +232,31 @@ def test_status_creates_token_on_first_call(client_active):
     key = _FakeKey("viur-tests", "auth-token")
     assert client_active._store[key]["token"] == result["token"]
     assert ConfigModule.current_token() == result["token"]
+
+
+def test_status_reports_namespace_when_set(install_transport_stub, monkeypatch):
+    """When ConfigModule is activated with a namespace, the status
+    endpoint must echo it back so runners can preflight against it."""
+    import json
+
+    client = _FakeClient()
+    install_transport_stub(client)
+
+    fake_ds = types.ModuleType("google.cloud.datastore")
+    fake_ds.Entity = _FakeEntity
+    monkeypatch.setitem(sys.modules, "google.cloud.datastore", fake_ds)
+    google_pkg = sys.modules.get("google") or types.ModuleType("google")
+    google_cloud = sys.modules.get("google.cloud") or types.ModuleType("google.cloud")
+    google_cloud.datastore = fake_ds
+    google_pkg.cloud = google_cloud
+    monkeypatch.setitem(sys.modules, "google", google_pkg)
+    monkeypatch.setitem(sys.modules, "google.cloud", google_cloud)
+
+    ConfigModule.set_active(database="viur-tests", project_id="proj-x", namespace="alice")
+
+    module = ConfigModule(moduleName="config", modulePath="_test/config")
+    result = json.loads(module.status())
+    assert result["namespace"] == "alice"
 
 
 def test_status_sets_content_type_to_json(client_active):
@@ -290,6 +338,52 @@ def test_status_is_marked_exposed_and_post_only():
 
 
 # ---------------------------------------------------------------------------
+# status() — project-supplied hooks
+# ---------------------------------------------------------------------------
+
+
+def test_status_hook_dict_is_merged_into_response(client_active):
+    import json
+
+    ConfigModule.register_status_hook(lambda: {"project_config": {"feature_x": True}})
+
+    module = ConfigModule(moduleName="config", modulePath="_test/config")
+    result = json.loads(module.status())
+    assert result["project_config"] == {"feature_x": True}
+    # Built-in fields are preserved alongside the hook's output.
+    assert result["test_mode"] is True
+    assert isinstance(result["token"], str)
+
+
+def test_status_hook_returning_none_is_a_noop(client_active):
+    import json
+
+    ConfigModule.register_status_hook(lambda: None)
+
+    module = ConfigModule(moduleName="config", modulePath="_test/config")
+    result = json.loads(module.status())
+    # No extra keys beyond the standard payload.
+    expected = {
+        "test_mode", "is_dev_server", "database", "namespace",
+        "project_id", "token", "token_hash", "version",
+    }
+    assert set(result) == expected
+
+
+def test_multiple_status_hooks_later_wins_on_conflict(client_active):
+    import json
+
+    ConfigModule.register_status_hook(lambda: {"shared": "first", "from_first": 1})
+    ConfigModule.register_status_hook(lambda: {"shared": "second", "from_second": 2})
+
+    module = ConfigModule(moduleName="config", modulePath="_test/config")
+    result = json.loads(module.status())
+    assert result["shared"] == "second"
+    assert result["from_first"] == 1
+    assert result["from_second"] == 2
+
+
+# ---------------------------------------------------------------------------
 # finish()
 # ---------------------------------------------------------------------------
 
@@ -332,3 +426,49 @@ def test_finish_refuses_when_dev_server_is_false(client_active, conf_instance):
 def test_finish_is_marked_exposed_and_post_only():
     assert getattr(ConfigModule.finish, "exposed", False) is True
     assert getattr(ConfigModule.finish, "force_post", False) is True
+
+
+# ---------------------------------------------------------------------------
+# finish() — project-supplied hooks
+# ---------------------------------------------------------------------------
+
+
+def test_finish_hook_dict_is_merged_into_response(client_active):
+    import json
+
+    ConfigModule.register_finish_hook(lambda: {"summary": {"users_cleaned": 3}})
+
+    module = ConfigModule(moduleName="config", modulePath="_test/config")
+    raw = module.finish()
+    result = json.loads(raw)
+    assert result["summary"] == {"users_cleaned": 3}
+    assert result["finished"] is True
+
+
+def test_finish_hook_returning_none_is_a_noop(client_active):
+    import json
+
+    ConfigModule.register_finish_hook(lambda: None)
+
+    module = ConfigModule(moduleName="config", modulePath="_test/config")
+    result = json.loads(module.finish())
+    assert set(result) == {"finished", "had_token"}
+
+
+# ---------------------------------------------------------------------------
+# Hook registration mechanics
+# ---------------------------------------------------------------------------
+
+
+def test_reset_clears_status_hooks():
+    ConfigModule.register_status_hook(lambda: {"x": 1})
+    assert len(ConfigModule._status_hooks) == 1
+    ConfigModule.reset()
+    assert ConfigModule._status_hooks == []
+
+
+def test_reset_clears_finish_hooks():
+    ConfigModule.register_finish_hook(lambda: {"x": 1})
+    assert len(ConfigModule._finish_hooks) == 1
+    ConfigModule.reset()
+    assert ConfigModule._finish_hooks == []

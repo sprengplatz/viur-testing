@@ -42,12 +42,12 @@ class ConfigModule(Module):
     Holds the per-process session state as class attributes and exposes
     two endpoints:
 
-    - ``POST /_test/config/status`` — verify the runtime is consistent
+    - ``POST /json/_test/config/status`` — verify the runtime is consistent
       (dev server + correct datastore database), then read or create
       the session token entity in the test database and return it.
       POST-only to block drive-by GETs from another browser tab on
       the same machine (CORS preflight stops the cross-origin call).
-    - ``POST /_test/config/finish`` — verify the runtime, delete the
+    - ``POST /json/_test/config/finish`` — verify the runtime, delete the
       token entity, clear the in-process token.
     """
 
@@ -90,8 +90,16 @@ class ConfigModule(Module):
     # ----- per-process state ------------------------------------------------
 
     _database: t.ClassVar[str | None] = None
+    _namespace: t.ClassVar[str | None] = None
     _project_id: t.ClassVar[str | None] = None
     _token: t.ClassVar[str | None] = None
+
+    # Project-supplied hooks. Each hook returns an optional dict whose
+    # entries get merged into the JSON response of /_test/config/status
+    # or /_test/config/finish. See :meth:`register_status_hook` and
+    # :meth:`register_finish_hook`.
+    _status_hooks: t.ClassVar[list[t.Callable[[], dict | None]]] = []
+    _finish_hooks: t.ClassVar[list[t.Callable[[], dict | None]]] = []
 
     @classmethod
     def is_active(cls) -> bool:
@@ -112,6 +120,13 @@ class ConfigModule(Module):
         return cls._project_id
 
     @classmethod
+    def current_namespace(cls) -> str | None:
+        """Datastore namespace this process is scoped to, or ``None`` for
+        the default namespace.
+        """
+        return cls._namespace
+
+    @classmethod
     def current_token(cls) -> str | None:
         return cls._token
 
@@ -122,21 +137,30 @@ class ConfigModule(Module):
         return hashlib.sha256(cls._token.encode("utf-8")).hexdigest()
 
     @classmethod
-    def set_active(cls, *, database: str, project_id: str) -> None:
+    def set_active(
+        cls, *, database: str, project_id: str, namespace: str | None = None,
+    ) -> None:
         """Mark the process as test-mode active.
 
-        Idempotent for matching ``(database, project_id)``; refuses to
-        silently overwrite a mismatching prior activation.
+        Idempotent for matching ``(database, project_id, namespace)``;
+        refuses to silently overwrite a mismatching prior activation.
         """
         if cls._database is None:
             cls._database = database
             cls._project_id = project_id
+            cls._namespace = namespace
             return
-        if cls._database != database or cls._project_id != project_id:
+        if (
+            cls._database != database
+            or cls._project_id != project_id
+            or cls._namespace != namespace
+        ):
             raise RuntimeError(
                 f"ConfigModule is already active for "
-                f"(database={cls._database!r}, project_id={cls._project_id!r}); "
-                f"refusing to switch to (database={database!r}, project_id={project_id!r})."
+                f"(database={cls._database!r}, namespace={cls._namespace!r}, "
+                f"project_id={cls._project_id!r}); refusing to switch to "
+                f"(database={database!r}, namespace={namespace!r}, "
+                f"project_id={project_id!r})."
             )
 
     @classmethod
@@ -152,11 +176,42 @@ class ConfigModule(Module):
         cls._token = None
 
     @classmethod
+    def register_status_hook(cls, hook: t.Callable[[], dict | None]) -> None:
+        """Register a project-side callback that fires inside ``/_test/config/status``.
+
+        The hook is invoked after the token has been issued and the
+        in-process state primed, but **before** the JSON response is
+        serialised. If it returns a dict, the entries are merged into
+        the response payload (later hooks win on conflicting keys).
+        Side effects on ``viur.core.conf`` are allowed — useful for
+        seeding project-specific config that every test relies on.
+
+        Registrations survive across calls to :meth:`reset` only if
+        the host re-runs the registration; ``reset()`` clears the
+        hook list along with the rest of the state.
+
+        :param hook: A zero-argument callable returning ``dict | None``.
+        """
+        cls._status_hooks.append(hook)
+
+    @classmethod
+    def register_finish_hook(cls, hook: t.Callable[[], dict | None]) -> None:
+        """Register a project-side callback that fires inside ``/_test/config/finish``.
+
+        Same shape as :meth:`register_status_hook`: optional dict
+        return value is merged into the ``finish`` response.
+        """
+        cls._finish_hooks.append(hook)
+
+    @classmethod
     def reset(cls) -> None:
         """Clear all state. Intended for tests only."""
         cls._database = None
+        cls._namespace = None
         cls._project_id = None
         cls._token = None
+        cls._status_hooks = []
+        cls._finish_hooks = []
 
     # ----- private helpers --------------------------------------------------
 
@@ -254,15 +309,21 @@ class ConfigModule(Module):
 
         from viur.testing import __version__  # noqa: PLC0415
 
-        return self._json_response({
+        payload: dict = {
             "test_mode": True,
             "is_dev_server": True,
             "database": cls._database,
+            "namespace": cls._namespace,
             "project_id": cls._project_id,
             "token": token,
             "token_hash": cls.current_token_hash(),
             "version": __version__,
-        })
+        }
+        for hook in cls._status_hooks:
+            extra = hook()
+            if extra:
+                payload.update(extra)
+        return self._json_response(payload)
 
     @exposed
     @force_post
@@ -277,7 +338,13 @@ class ConfigModule(Module):
         cls._require_runtime_consistency()
         existed = cls._delete_token()
         cls.clear_token()
-        return self._json_response({"finished": True, "had_token": existed})
+
+        payload: dict = {"finished": True, "had_token": existed}
+        for hook in cls._finish_hooks:
+            extra = hook()
+            if extra:
+                payload.update(extra)
+        return self._json_response(payload)
 
 
 __all__ = ["ConfigModule"]

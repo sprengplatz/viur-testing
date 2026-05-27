@@ -34,11 +34,12 @@ def _stub_opener(payload):
     return opener, captured
 
 
-def _server_payload(token, database="viur-tests", project_id="proj"):
+def _server_payload(token, database="viur-tests", project_id="proj", namespace=None):
     return {
         "test_mode": True,
         "is_dev_server": True,
         "database": database,
+        "namespace": namespace,
         "project_id": project_id,
         "token": token,
         "token_hash": hashlib.sha256(token.encode("utf-8")).hexdigest(),
@@ -56,15 +57,56 @@ def test_require_test_mode_happy_path():
     status = runner.require_test_mode("http://localhost:8080", _opener=opener)
     assert status.token == "tok"
     assert status.database == "viur-tests"
+    assert status.namespace is None
     assert status.project_id == "proj"
-    assert captured["url"] == "http://localhost:8080/_test/config/status"
+    assert captured["url"] == "http://localhost:8080/json/_test/config/status"
     assert captured["method"] == "POST"
+
+
+def test_require_test_mode_returns_namespace_from_response():
+    opener, _ = _stub_opener(_server_payload("tok", namespace="alice"))
+    status = runner.require_test_mode("http://localhost", _opener=opener)
+    assert status.namespace == "alice"
+
+
+def test_expected_namespace_check_skipped_by_default():
+    """Without ``expected_namespace``, the runner accepts any namespace
+    (including the default ``None``)."""
+    opener, _ = _stub_opener(_server_payload("tok", namespace="anything"))
+    status = runner.require_test_mode("http://localhost", _opener=opener)
+    assert status.namespace == "anything"
+
+
+def test_expected_namespace_match_passes():
+    opener, _ = _stub_opener(_server_payload("tok", namespace="alice"))
+    status = runner.require_test_mode(
+        "http://localhost", expected_namespace="alice", _opener=opener,
+    )
+    assert status.namespace == "alice"
+
+
+def test_expected_namespace_mismatch_raises():
+    opener, _ = _stub_opener(_server_payload("tok", namespace="bob"))
+    with pytest.raises(runner.TestModePreflightError, match="namespace="):
+        runner.require_test_mode(
+            "http://localhost", expected_namespace="alice", _opener=opener,
+        )
+
+
+def test_expected_namespace_none_asserts_default_namespace():
+    """``expected_namespace=None`` is an explicit assertion: the server
+    must be on the Datastore default namespace."""
+    opener, _ = _stub_opener(_server_payload("tok", namespace="alice"))
+    with pytest.raises(runner.TestModePreflightError, match="namespace="):
+        runner.require_test_mode(
+            "http://localhost", expected_namespace=None, _opener=opener,
+        )
 
 
 def test_require_test_mode_strips_trailing_slash():
     opener, captured = _stub_opener(_server_payload("tok"))
     runner.require_test_mode("http://localhost:8080/", _opener=opener)
-    assert captured["url"] == "http://localhost:8080/_test/config/status"
+    assert captured["url"] == "http://localhost:8080/json/_test/config/status"
 
 
 def test_test_mode_false_raises():
@@ -194,7 +236,7 @@ def test_finish_posts_with_token_header():
     opener, captured = _stub_opener({"finished": True, "had_token": True})
     result = runner.finish("http://localhost:8080", "tok", _opener=opener)
     assert result == {"finished": True, "had_token": True}
-    assert captured["url"] == "http://localhost:8080/_test/config/finish"
+    assert captured["url"] == "http://localhost:8080/json/_test/config/finish"
     assert captured["method"] == "POST"
     headers = {k.lower(): v for k, v in captured["headers"].items()}
     assert headers["x-viur-test-token"] == "tok"

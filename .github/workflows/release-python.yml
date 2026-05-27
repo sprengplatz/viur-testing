@@ -1,0 +1,195 @@
+name: Release (Python)
+
+on:
+  push:
+    tags:
+      # Manifest-as-source-of-truth: the `<version>` between `v` and
+      # `-py` must match `__version__` in src/viur/testing/__init__.py
+      # exactly. Examples:
+      #   v0.2.0-py        — stable
+      #   v0.2.0rc1-py     — release candidate (PEP 440 form)
+      #   v0.2.0a1-py      — alpha
+      #   v0.2.0b1-py      — beta
+      - "v*-py"
+
+permissions:
+  contents: read
+
+jobs:
+  # ----- Gate 1: full test matrix must pass ---------------------------------
+  test:
+    name: Test (Python ${{ matrix.python }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.12", "3.13"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install (skip viur-core runtime dep — mocked by spltz-viur-light-mock)
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install --no-deps -e .
+          python -m pip install pytest pytest-cov 'coverage[toml]' spltz-viur-light-mock
+
+      - name: Tests
+        run: pytest
+
+  # ----- Gate 2: docs must build cleanly in strict mode ---------------------
+  docs:
+    name: Docs build (strict)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install --no-deps -e .
+          python -m pip install mkdocs-material 'mkdocstrings[python]'
+
+      - name: Build (strict)
+        run: mkdocs build --strict
+
+  # ----- Verify the tag matches __version__ ---------------------------------
+  version-check:
+    name: Tag vs. __version__
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Compare
+        run: |
+          # Strip the leading "v" and trailing "-py" from the tag name.
+          TAG="${GITHUB_REF_NAME#v}"
+          TAG="${TAG%-py}"
+          # Install the package itself (no deps — pytest/viur-core not needed
+          # for the import) and read `__version__` via a regular import.
+          # Avoids the YAML→bash→python quoting hell of inlining a regex.
+          python -m pip install --no-deps -e .
+          PKG=$(python -c "from viur.testing import __version__; print(__version__)")
+          echo "Tag (stripped): $TAG"
+          echo "Package:        $PKG"
+          if [ "$TAG" != "$PKG" ]; then
+            echo "::error::Tag ($TAG) does not match __version__ ($PKG). Manifest is the single source of truth — bump src/viur/testing/__init__.py before tagging."
+            exit 1
+          fi
+
+  # ----- Build wheel + sdist ------------------------------------------------
+  build:
+    name: Build Python distribution
+    needs: [test, docs, version-check]
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Build wheel + sdist
+        run: |
+          python -m pip install --upgrade pip build
+          python -m build
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-dist
+          path: dist/
+
+  # ----- Publish to PyPI via OIDC Trusted Publishing ------------------------
+  #
+  # Setup on the PyPI side (one-time, per project):
+  #   PyPI project (`spltz-viur-testing`) → Publishing → Add a publisher
+  #   - Owner:           sprengplatz
+  #   - Repository:      viur-testing
+  #   - Workflow:        release-python.yml
+  #   - Environment:     pypi
+  publish:
+    name: Publish to PyPI
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/spltz-viur-testing
+    permissions:
+      id-token: write   # OIDC trusted publishing
+
+    steps:
+      - name: Download Python dist
+        uses: actions/download-artifact@v4
+        with:
+          name: python-dist
+          path: dist/
+
+      - name: Publish
+        uses: pypa/gh-action-pypi-publish@release/v1
+
+  # ----- Cut GitHub Release with wheel + sdist attached ---------------------
+  release:
+    name: Create GitHub Release
+    needs: [build, publish]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download Python dist
+        uses: actions/download-artifact@v4
+        with:
+          name: python-dist
+          path: dist/
+
+      - name: Determine pre-release flag
+        id: prerelease
+        run: |
+          # PEP 440 pre-releases contain a, b, rc or dev in the version
+          # (e.g. 0.2.0rc1). Stripping `v` and `-py` leaves the bare
+          # version; if it has any non-numeric / non-dot char, it's a
+          # pre-release.
+          TAG="${GITHUB_REF_NAME#v}"
+          TAG="${TAG%-py}"
+          if [[ "$TAG" =~ [^0-9.] ]]; then
+            echo "value=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "value=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: "Python ${{ github.ref_name }}"
+          generate_release_notes: true
+          prerelease: ${{ steps.prerelease.outputs.value }}
+          files: |
+            dist/*.whl
+            dist/*.tar.gz

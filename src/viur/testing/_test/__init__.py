@@ -59,6 +59,46 @@ class TestModule(Module):
     # start with "Test" but it is a viur module, not a unittest container.
     __test__ = False
 
+    # Host-provided test submodules registered via
+    # :func:`viur.testing.register_test_submodule`. Read at mount time
+    # by :meth:`__init__` and attached as instance attributes so the
+    # router sees them as ``/_test/<name>/...``.
+    _user_submodules: t.ClassVar[dict[str, type]] = {}
+
+    _RESERVED_SUBMODULE_NAMES: t.ClassVar[frozenset[str]] = frozenset({"config"})
+
+    @classmethod
+    def register_submodule(cls, name: str, module_cls: type) -> None:
+        """Add a host-provided submodule that will be mounted under
+        ``/_test/<name>/...`` whenever TestModule itself mounts.
+
+        Must be called **before** ``viur.core.setup()`` runs — the
+        list is consumed in :meth:`__init__` when the router builds
+        the application.
+
+        The ``name`` is normalised to lowercase because viur-core
+        lower-cases every URL path segment at request time
+        (``viur.core.request.BrowseHandler``). Without normalisation
+        a registration of ``userLogin`` would land in the resolver
+        as mixed-case while the request looks up ``userlogin`` — and
+        the lookup would silently fail.
+
+        :param name: URL segment under ``/_test/``. Lower-cased
+            internally. Must not clash with the names already used by
+            viur-testing itself (see :attr:`_RESERVED_SUBMODULE_NAMES`).
+        :param module_cls: Subclass of ``viur.core.Module`` to mount.
+        :raises ValueError: when ``name`` is reserved or empty.
+        """
+        if not name:
+            raise ValueError("Submodule name must be a non-empty string.")
+        name = name.lower()
+        if name in cls._RESERVED_SUBMODULE_NAMES:
+            raise ValueError(
+                f"Submodule name {name!r} is reserved by viur-testing "
+                f"(reserved: {sorted(cls._RESERVED_SUBMODULE_NAMES)})."
+            )
+        cls._user_submodules[name] = module_cls
+
     def __init__(
         self,
         moduleName: str = "_test",
@@ -86,8 +126,18 @@ class TestModule(Module):
             moduleName="config",
             modulePath=f"{modulePath}/config",
         )
+        # Mount host-registered submodules (see :meth:`register_submodule`).
+        # These typically correspond 1:1 to e2e spec files — name of the
+        # submodule matches the spec name, so /_test/<spec>/setup +
+        # /_test/<spec>/teardown is the convention.
+        for sub_name, sub_cls in type(self)._user_submodules.items():
+            instance = sub_cls(
+                moduleName=sub_name,
+                modulePath=f"{modulePath}/{sub_name}",
+            )
+            setattr(self, sub_name, instance)
         # Re-scan attributes — the base __init__ already ran one scan
-        # before ``self.config`` was attached.
+        # before ``self.config`` / host submodules were attached.
         self._update_methods()
 
 

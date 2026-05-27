@@ -7,129 +7,226 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
-### Added
+No release yet — every entry below is a feature added during the
+initial design.
+
+### Distribution
+
+- The Python package ships on PyPI as **`spltz-viur-testing`** (the
+  experimental `spltz-` prefix marks it pre-1.0). The Python import
+  path stays `viur.testing` — namespace package, no rename in host
+  code. Install with `pip install spltz-viur-testing`.
+- A companion npm package **`@spltz/viur-testing`** lives in
+  `playwright/` next to the Python sources. It bundles Playwright
+  fixtures, the global-setup / global-teardown factories, the
+  forbidden-import guard, test-module helpers, the Vite plugin and
+  a `viur-testing-init` CLI for scaffolding new e2e suites.
+
+### Test-mode activation
 
 - `viur.testing.setup()` and `viur.testing.register_modules()` — two
-  one-liner host wrappers around the underlying primitives. ``main.py``
-  is reduced to ``import viur.testing; viur.testing.setup()`` and
-  ``modules/__init__.py`` to ``viur.testing.register_modules(globals())``.
+  one-liner host wrappers around the underlying primitives. `main.py`
+  is reduced to `import viur.testing; viur.testing.setup()` and
+  `modules/__init__.py` to `viur.testing.register_modules(globals())`.
   Both are no-ops in production (env var unset / state inactive).
 - `viur.testing.activate()` — atomic test-mode activation. Order of
-  checks: ``viur.core.db.transport`` not yet imported, then
-  ``conf.instance.is_dev_server`` true, then builds a
-  ``datastore.Client(database=…)`` against the test database (default
-  ``viur-tests``), runs a synchronous probe roundtrip, patches
-  ``transport.__client__``, monkey-patches
-  ``viur.core.db.types.Key.__init__`` to inject ``database=`` on every
-  newly constructed Key, extends ``conf.security.closed_system_allowed_paths``
-  with the bootstrap endpoints, primes ``ConfigModule`` and installs
-  the request validator. No on-disk state.
+  checks: `viur.core.db.transport` not yet imported, then
+  `conf.instance.is_dev_server` true, then builds a
+  `datastore.Client(database=…, namespace=…)` against the test
+  database, runs a synchronous probe roundtrip, patches
+  `transport.__client__`, monkey-patches
+  `viur.core.db.types.Key.__init__` to inject `database=` /
+  `namespace=` on every newly constructed Key, monkey-patches
+  `google.cloud.datastore.Key.to_legacy_urlsafe` so it tolerates
+  named databases, extends
+  `conf.security.closed_system_allowed_paths` with broad `_test/*`
+  wildcards, primes `ConfigModule`, installs the request validator
+  and wraps `viur.core.setup` so the dev-server boot banner shows
+  the test-mode parameters. No on-disk state.
 - `viur.testing.protect()` and `ProductionGuardValidator` — host
   installs the guard via `protect()` in every environment. On a
-  non-dev server, any request carrying an ``X-Viur-Test-Token`` header
-  is rejected with 403 regardless of the header's value. In dev the
-  guard is a no-op (the full `TokenValidator` already handles the
-  header).
+  non-dev server, any request carrying an `X-Viur-Test-Token`
+  header is rejected with 403 regardless of the header's value. In
+  dev the guard is a no-op (the full `TokenValidator` already
+  handles the header).
+- `setup(api_dir="testing")` — registers the project-side test API
+  package as importable top-level `api` via `importlib.util`. The
+  directory lives outside `deploy/` (so `gcloud app deploy` never
+  uploads it) and is wired in by resolving `<dirname(main.py)>/../<api_dir>/api/__init__.py`.
+  Walks `inspect.stack()` to anchor the path at the caller's
+  `main.py` so the host needs nothing but `viur.testing.setup()`.
+  Prints a one-line info message when the directory does not exist
+  rather than crashing.
+
+### Datastore namespace isolation
+
+- `activate(database=…, namespace=…)` and the
+  `VIUR_TESTING_NAMESPACE` env var — partition writes inside one
+  `viur-tests` database so several engineers (or CI runs) can share
+  the database without colliding on each other's entities. Empty
+  string or unset = no namespace (default Datastore namespace).
+- `_patch_key_factory` injects both `database=` and `namespace=`
+  defaults into `viur.core.db.Key.__init__`, so every Key
+  viur-core builds during test mode points at the same slice as
+  the active client.
+- `_patch_legacy_urlsafe` monkey-patches
+  `google.cloud.datastore.Key.to_legacy_urlsafe` to temporarily
+  clear `self._database` around the legacy serialisation. Without
+  this every successful login crashed the server (viur-core uses
+  `str(key)` in session save + JSON renders, which calls
+  `to_legacy_urlsafe` which refuses named databases). The patch
+  restores `_database` in `finally` so the key stays consistent
+  even on exception paths.
+- `ConfigModule.current_namespace()` and `_namespace` class state —
+  reported back to runners via `/json/_test/config/status` so the
+  preflight can assert the expected namespace.
+- `require_test_mode(expected_namespace=…)` — runner-side check
+  with `_UNSET` sentinel: pass a string for an exact namespace,
+  `None` to assert the default namespace, omit the field to skip
+  the check entirely.
+
+### Bilateral session handshake
+
 - `viur.testing._test.TestModule` — host-mountable container module
-  under ``/_test``. Carries ``json = True`` so viur-core's
-  ``__build_app`` registers it under the JSON renderer. Refuses to
-  instantiate outside a local dev server *or* when `activate()` has
-  not run yet — the structural last line of defence against
-  accidental production mounts and against silent
+  under `/_test`. Carries `json = True` so viur-core's
+  `__build_app` registers it under the JSON renderer. Refuses to
+  instantiate outside a local dev server *or* when `activate()`
+  has not run yet — structural last line of defence against
+  accidental production mounts and silent
   "mounted-but-unactivated" states.
 - `viur.testing._test.config.ConfigModule` — the bootstrap config
-  submodule mounted as ``/_test/config``. Carries the per-process
-  class-level state (``_database``, ``_project_id``, ``_token``) and
-  the same two mount guards as `TestModule` so a host that bypasses
-  the container and mounts `ConfigModule` directly is still caught.
-  Endpoint bodies are emitted as JSON strings (``Content-Type:
-  application/json`` + ``json.dumps``) so viur-core's WSGI layer
-  forwards a proper JSON body rather than a Python ``repr`` of a
+  submodule mounted as `/_test/config`. Carries the per-process
+  class-level state (`_database`, `_namespace`, `_project_id`,
+  `_token`, `_status_hooks`, `_finish_hooks`) and the same two
+  mount guards as `TestModule` so a host that bypasses the
+  container and mounts `ConfigModule` directly is still caught.
+  Endpoint bodies are emitted as JSON strings (`Content-Type:
+  application/json` + `json.dumps`) so viur-core's WSGI layer
+  forwards a proper JSON body rather than a Python `repr` of a
   dict. Exposes two endpoints:
-  - ``POST /_test/config/status`` — re-verifies dev-server + datastore
-    database, then reads/creates the session token entity in the test
-    database (kind ``viur-tests``, entity ``auth-token``) and returns
-    it to the runner. Response carries ``token``, ``token_hash``,
-    ``database``, ``project_id``, ``version``. Idempotent. POST-only
-    so a parallel browser tab cannot drive-by trigger the endpoint
-    via a simple GET (CORS preflight stops the cross-origin POST).
-  - ``POST /_test/config/finish`` — re-verifies, deletes the token
-    entity, clears the in-process token. Test-mode itself stays
+  - `POST /json/_test/config/status` — re-verifies dev-server +
+    datastore database, then reads/creates the session token entity
+    in the test database (kind `viur-tests`, entity `auth-token`)
+    and returns it to the runner. Response carries `token`,
+    `token_hash`, `database`, `namespace`, `project_id`,
+    `version`, plus any extra keys returned from status hooks.
+    Idempotent. POST-only so a parallel browser tab cannot
+    drive-by trigger the endpoint via a simple GET (CORS
+    preflight stops the cross-origin POST).
+  - `POST /json/_test/config/finish` — re-verifies, deletes the
+    token entity, clears the in-process token. Response includes
+    extra keys returned from finish hooks. Test-mode itself stays
     armed.
 - `viur.testing.validator.TokenValidator` — `RequestValidator`
   rejecting every non-bootstrap request that lacks a matching
-  ``X-Viur-Test-Token`` header (constant-time compare). Auto-installed
-  by `activate()`. Paths ending in ``/_test/config/status`` or
-  ``/_test/config/finish`` bypass the token check so the runner can
-  bootstrap a session before one exists.
+  `X-Viur-Test-Token` header (constant-time compare).
+  Auto-installed by `activate()`. Paths ending in
+  `/_test/config/status` or `/_test/config/finish` bypass the
+  token check so the runner can bootstrap a session before one
+  exists.
 - `viur.testing.require_test_mode()` — runner preflight: calls
-  ``/_test/config/status``, verifies the response, returns a
-  `ServerStatus` carrying the session token.
-- `viur.testing.finish()` — runner cleanup: deletes the token entity
-  via ``POST /_test/config/finish``.
-- The top-level `viur.testing/__init__.py` only re-exports the
-  viur-core-free surface (`activate`, `protect`, `require_test_mode`,
-  `finish`, plus dataclasses/constants). The heavy classes
-  (`TestModule`, `ConfigModule`, `TokenValidator`,
-  `ProductionGuardValidator`) live in their concrete submodules and
-  must be imported from there — so ``import viur.testing`` does not
-  trigger ``viur.core`` before the datastore client swap.
-- Test suite against ``viur-light-mock`` + local stubs, 100% line +
-  branch coverage.
-- ``smoke_test.py`` — end-to-end script that walks every refuse path
-  in a fresh subprocess and additionally exercises ``activate()`` all
-  the way through to a real ``datastore.Client(database="viur-tests")``
-  + probe roundtrip when run against a workstation with valid GCP
-  credentials.
+  `/json/_test/config/status`, verifies test-mode + dev-server +
+  database (and optionally namespace + project_id), checks the
+  token's sha256 matches the server-reported `token_hash`,
+  returns a `ServerStatus` with all session info.
+- `viur.testing.finish()` — runner cleanup: deletes the token
+  entity via `POST /json/_test/config/finish`.
+
+### Host-registered test fixtures
+
+- `viur.testing.register_test_submodule(name, cls)` — registers a
+  project-specific submodule that mounts under `/_test/<name>/…`
+  alongside the built-in `config`. Names are normalised to
+  lowercase (viur-core lower-cases URL segments at request time),
+  `config` is reserved, empty names are refused. Late registration
+  via class-level dict on `TestModule`, consumed at mount time.
+- `viur.testing.register_status_hook(hook)` and
+  `register_finish_hook(hook)` — let project code attach callbacks
+  that run inside the `/json/_test/config/status` and `…/finish`
+  endpoints. Hook signature is `() -> dict | None`; returned dicts
+  are merged into the JSON response (later hooks win on key
+  conflicts). Use for project-specific test-mode prep (feature
+  flags, seed-data references) and for surfacing extra info to
+  runners. Side effects on `viur.core.conf` are allowed.
+
+### Dev-server boot banner
+
+- `viur.testing.banner.install_banner_patch(database, namespace)` —
+  wraps `viur.core.setup()` so its `LOCAL DEVELOPMENT SERVER IS UP
+  AND RUNNING` ASCII banner gains two extra lines: `database = …`
+  (always) and `namespace = …` (rendered as `(default)` when not
+  set). Pattern-matches the banner title and trailer instead of
+  hard-counting line indices, so a future viur-core banner format
+  change degrades gracefully. Idempotent — re-entry from
+  `activate()` does not stack wrappers.
+
+### Top-level package surface
+
+- `viur.testing/__init__.py` re-exports only the viur-core-free
+  surface: `activate`, `protect`, `setup`, `register_modules`,
+  `register_test_submodule`, `register_status_hook`,
+  `register_finish_hook`, `require_test_mode`, `finish`, plus
+  dataclasses (`ServerStatus`), errors (`TestModePreflightError`)
+  and constants (`TOKEN_HEADER`, `DEFAULT_DATABASE`). The heavy
+  classes (`TestModule`, `ConfigModule`, `TokenValidator`,
+  `ProductionGuardValidator`) live in their concrete submodules
+  and must be imported from there — so `import viur.testing` does
+  not trigger `viur.core` before the datastore client swap.
+
+### Quality
+
+- pytest suite against `viur-light-mock` + local stubs, **100%
+  line + branch coverage** required. 182 tests at the time of
+  writing.
+- `smoke_test.py` — end-to-end script that walks every refuse path
+  in a fresh subprocess and additionally exercises `activate()`
+  all the way through to a real `datastore.Client(database=
+  "viur-tests")` + probe roundtrip when run against a workstation
+  with valid GCP credentials.
 
 ### Lessons learned from booting against a real viur-core project
 
-These five surprises only surfaced when the package was wired into the
-real ``deploy/`` project and not into mocks. Each one is now built in:
+These surprises only surfaced when the package was wired into the
+real `deploy/` project and not into mocks. Each one is now built
+in:
 
-1. **Reserved Datastore kind prefix.** Original ``PROBE_KIND`` was
-   ``__viur_test_probe__``. Google Cloud Datastore reserves ``__*__``
-   for system-internal use and 400s the write with ``The kind … is
-   reserved``. Renamed to ``viur-test-probe``.
-2. **Multi-database Key construction.** viur-core's ``Key`` class
-   forwards ``project=`` to ``google.cloud.datastore.Key`` but **not**
-   ``database=``. With a named-DB client every Key viur-core builds
-   is for the default database, and Datastore rejects the call with
-   ``mismatched databases within request``. Fixed by
-   ``_patch_key_factory`` which wraps ``Key.__init__`` to default
-   ``database=`` to the patched client's database.
-3. **Closed-system gate.** Many host projects set
-   ``conf.security.closed_system = True`` in their own config.py.
-   Once on, every URL not in
-   ``conf.security.closed_system_allowed_paths`` returns 401 *before*
-   the route is resolved. ``activate()`` now extends that allow-list
-   with the two bootstrap endpoints (plus wildcards for arbitrary
-   render prefixes) so ``/_test/config/status`` + ``/_test/config/finish``
-   reach the module.
-4. **Render-name opt-in.** ``__build_app`` only registers a module
-   class for a given renderer if ``getattr(cls, render_name, False)``
-   is truthy. Without ``TestModule.json = True`` the routes are
-   silently not mounted. The class now carries that flag.
-5. **Class vs. instance in modules namespace.** ``__build_app``
-   iterates ``vars(modules)`` and only picks up subclasses of Module
-   (or already-instanced ``InstancedModule``). A bare module
-   instance is silently skipped. The host-side wiring documented in
-   the README registers ``TestModule`` as a *class*, not as an
-   instance.
-
-### Fixed
-
-- ``PROBE_KIND`` is now ``viur-test-probe`` (see lesson 1 above).
-- Status and finish endpoints return ``json.dumps(...)`` with
-  ``Content-Type: application/json`` instead of raw Python dicts
-  (viur-core's WSGI layer would otherwise stringify the dict via
-  ``str()``, sending Python repr to the client).
-- ``_require_dev_server`` runs **after** ``_require_transport_not_loaded``
-  in ``activate()``. The dev-server check reads
-  ``conf.instance.is_dev_server`` which triggers the full
-  ``viur.core/__init__.py`` import chain (including
-  ``viur.core.db.transport``); running the transport-not-loaded
-  check first cleanly distinguishes "host already imported viur-core"
-  (refuse) from "we are about to import it ourselves" (allowed).
+1. **Reserved Datastore kind prefix.** Original `PROBE_KIND` was
+   `__viur_test_probe__`. Google Cloud Datastore reserves `__*__`
+   for system-internal use and 400s the write with `The kind … is
+   reserved`. Final name is `viur-test-probe`.
+2. **Multi-database Key construction.** viur-core's `Key` class
+   forwards `project=` to `google.cloud.datastore.Key` but **not**
+   `database=` or `namespace=`. With a named-DB client every Key
+   viur-core builds is for the default database, and Datastore
+   rejects the call with `mismatched databases within request`.
+   Solved by `_patch_key_factory` wrapping `Key.__init__`.
+3. **`to_legacy_urlsafe` refuses named databases.** viur-core's
+   `Key.__str__` calls `to_legacy_urlsafe()`, which raises on any
+   key with `database` set. Triggers on session-save and
+   login-success JSON render. Solved by `_patch_legacy_urlsafe`.
+4. **viur-core lower-cases URL segments at routing time.**
+   `register_submodule("userLogin", …)` would register under the
+   mixed-case key but the router looks up `userlogin`, so the
+   route silently 404'd. `register_submodule` now lower-cases the
+   key.
+5. **Closed-system gate.** Many host projects set
+   `conf.security.closed_system = True`. Once on, every URL not
+   in `closed_system_allowed_paths` returns 401 before the route
+   is resolved. `activate()` extends the allow-list with broad
+   `_test/*` / `*/_test/*` wildcards so both the built-in
+   bootstrap and host-registered fixture submodules pass through;
+   the `TokenValidator` is the actual access control.
+6. **Render-name opt-in.** `__build_app` only registers a module
+   class for a given renderer if `getattr(cls, render_name,
+   False)` is truthy. Without `TestModule.json = True` the routes
+   are silently not mounted, and the actual HTTP URL becomes
+   `/json/_test/config/…` (JSON renderer prefix) — not
+   `/_test/config/…` as one might expect from the module
+   hierarchy.
+7. **Class vs. instance in modules namespace.** `__build_app`
+   iterates `vars(modules)` and only picks up subclasses of
+   `Module` (or already-instanced `InstancedModule`). A bare
+   module instance is silently skipped. The host-side wiring
+   registers `TestModule` as a *class*, not as an instance.
 
 [Unreleased]: https://github.com/sprengplatz/viur-testing/commits/main

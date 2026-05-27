@@ -28,7 +28,7 @@ server **and** the runner agree they are talking to the test instance.
 5. **`protect()` installs a production-side header guard** that 403s
    any request carrying the test token header outside dev, regardless
    of its value. Installed in every environment.
-6. **Runner preflight** calls `/_test/config/status` and refuses to run
+6. **Runner preflight** calls `/json/_test/config/status` and refuses to run
    any test if the server's reply (database, project_id, token hash)
    does not match.
 
@@ -53,6 +53,20 @@ sibling submodules under the same `_test` container.
 - viur-core ≥ 3.7, < 4
 - A named Datastore database (default name: `viur-tests`) created in
   your GCP project alongside `(default)`.
+
+## Install
+
+The PyPI distribution name is `spltz-viur-testing` (experimental
+prefix); the Python import path stays `viur.testing`:
+
+```sh
+pip install spltz-viur-testing
+```
+
+```python
+import viur.testing
+viur.testing.setup()
+```
 
 ## Server-side wiring
 
@@ -86,7 +100,7 @@ import viur.testing
 viur.testing.register_modules(globals())
 ```
 
-That exposes `POST /_test/config/status` and `POST /_test/config/finish`.
+That exposes `POST /json/_test/config/status` and `POST /json/_test/config/finish`.
 Both endpoints re-verify `conf.instance.is_dev_server` and the active
 datastore database before performing any work — defence in depth on
 top of the `TestModule.__init__` guard.
@@ -95,6 +109,84 @@ If you need more control, the two functions wrap underlying primitives
 you can call yourself: `viur.testing.activate(database=...)`,
 `viur.testing.protect()`, plus direct mounting via
 `from viur.testing._test import TestModule`.
+
+## Running the dev server with test mode
+
+Toggle test mode at boot by setting the env var that `setup()` reads:
+
+```sh
+VIUR_TESTING_ENABLE=1 viur run
+```
+
+Without the env var, `setup()` skips `activate()` and the process boots
+against the default database as if the package were not installed.
+
+When test mode is active, the dev-server boot banner gains two extra
+lines — `database = …` and `namespace = …` — so the running slice is
+visible at a glance. The namespace line is rendered unconditionally;
+without `VIUR_TESTING_NAMESPACE` it falls back to `(default)`, making
+it obvious that test mode is armed but namespace isolation is **not**
+in effect:
+
+```
+# With VIUR_TESTING_NAMESPACE=alice
+################## LOCAL DEVELOPMENT SERVER IS UP AND RUNNING ##################
+#                          project = my-viur-project                           #
+#                               python = 3.13.0                                #
+#                                viur = 3.8.25                                 #
+#                            database = viur-tests                             #
+#                              namespace = alice                               #
+################################################################################
+
+# Without VIUR_TESTING_NAMESPACE (or with empty value)
+################## LOCAL DEVELOPMENT SERVER IS UP AND RUNNING ##################
+#                          project = my-viur-project                           #
+#                               python = 3.13.0                                #
+#                                viur = 3.8.25                                 #
+#                            database = viur-tests                             #
+#                            namespace = (default)                             #
+################################################################################
+```
+
+## Concurrency: sharing one test database across multiple testers
+
+The `viur-tests` database is a shared GCP resource. If two engineers
+both boot a dev server with the same database and run tests at the
+same time, their entities will collide — Person A's seed wipes
+Person B's user, Person B's test queries find leftovers from Person A.
+
+The fix is the optional `namespace` argument. ViUR-testing passes it
+to `google.cloud.datastore.Client(database=…, namespace=…)` and rewires
+`viur.core.db.Key` so every read and write in the process is scoped
+to that namespace. Different namespaces in the same database are
+fully isolated — no separate DB provisioning needed.
+
+Boot each dev server with its own namespace:
+
+```sh
+# Alice's machine
+VIUR_TESTING_ENABLE=1 VIUR_TESTING_NAMESPACE=alice viur run
+
+# Bob's machine
+VIUR_TESTING_ENABLE=1 VIUR_TESTING_NAMESPACE=bob viur run
+
+# CI for PR #42
+VIUR_TESTING_ENABLE=1 VIUR_TESTING_NAMESPACE=ci-pr-42 viur run
+```
+
+The runner-side `require_test_mode` can assert the expected namespace
+to fail fast when somebody points at the wrong slice::
+
+    from viur.testing import require_test_mode
+
+    status = require_test_mode(
+        "http://localhost:8080",
+        expected_namespace="alice",  # omit to skip; pass None for default
+    )
+
+`VIUR_TESTING_NAMESPACE` may be empty or unset — both mean "no
+namespace, use the Datastore default". This is the existing behaviour
+when no namespaces are needed (e.g. single-developer setup).
 
 ## Runner-side wiring (pytest + Playwright)
 

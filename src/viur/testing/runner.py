@@ -34,11 +34,17 @@ class TestModePreflightError(RuntimeError):
     """Raised when the runner cannot confirm the server is in test mode."""
 
 
+_UNSET: t.Final = object()
+"""Sentinel that distinguishes "namespace check omitted" from
+``expected_namespace=None`` (which means "expect the default namespace")."""
+
+
 @dataclasses.dataclass(frozen=True)
 class ServerStatus:
     """Validated server-side snapshot returned by ``/_test/config/status``."""
 
     database: str
+    namespace: str | None
     project_id: str
     token: str
     token_hash: str
@@ -79,7 +85,7 @@ def _do_request(
 
 def _build_status_request(base_url: str) -> urllib.request.Request:
     return urllib.request.Request(
-        base_url.rstrip("/") + "/_test/config/status",
+        base_url.rstrip("/") + "/json/_test/config/status",
         headers={"Accept": "application/json"},
         method="POST",
         data=b"",
@@ -88,7 +94,7 @@ def _build_status_request(base_url: str) -> urllib.request.Request:
 
 def _build_finish_request(base_url: str, token: str) -> urllib.request.Request:
     return urllib.request.Request(
-        base_url.rstrip("/") + "/_test/config/finish",
+        base_url.rstrip("/") + "/json/_test/config/finish",
         headers={
             "Accept": "application/json",
             TOKEN_HEADER: token,
@@ -102,6 +108,7 @@ def require_test_mode(
     base_url: str,
     *,
     expected_database: str = DEFAULT_DATABASE,
+    expected_namespace: str | None | t.Any = _UNSET,
     expected_project_id: str | None = None,
     timeout: float = 5.0,
     _opener: t.Callable[[urllib.request.Request, float], t.Any] | None = None,
@@ -112,6 +119,9 @@ def require_test_mode(
         e.g. ``http://localhost:8080``.
     :param expected_database: Database name we expect the server to be on.
         Default ``viur-tests``.
+    :param expected_namespace: When supplied, the server's ``namespace``
+        must match exactly. Pass ``None`` to assert the server is on the
+        default namespace; omit the argument entirely to skip the check.
     :param expected_project_id: If set, the server's ``project_id`` must
         match. Use this when your CI knows which GCP project the dev
         server is bound to.
@@ -138,6 +148,11 @@ def require_test_mode(
             f"Server reports database={server.get('database')!r}, "
             f"expected {expected_database!r}."
         )
+    if expected_namespace is not _UNSET and server.get("namespace") != expected_namespace:
+        raise TestModePreflightError(
+            f"Server reports namespace={server.get('namespace')!r}, "
+            f"expected {expected_namespace!r}."
+        )
     if expected_project_id is not None and server.get("project_id") != expected_project_id:
         raise TestModePreflightError(
             f"Server reports project_id={server.get('project_id')!r}, "
@@ -159,6 +174,7 @@ def require_test_mode(
 
     return ServerStatus(
         database=server["database"],
+        namespace=server.get("namespace"),
         project_id=server["project_id"],
         token=token,
         token_hash=reported_hash,

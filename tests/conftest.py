@@ -50,6 +50,15 @@ def _install_request_stub() -> types.ModuleType:
     return mod
 
 
+def _install_setup_stub() -> None:
+    """Install a no-op ``viur.core.setup`` so :func:`viur.testing.banner.
+    install_banner_patch` has something to wrap. Tests that exercise the
+    banner replace ``viur.core.setup`` with a banner-emitting stub.
+    """
+    viur_core = sys.modules["viur.core"]
+    viur_core.setup = lambda *_a, **_kw: None
+
+
 def _install_module_stub() -> None:
     viur_core = sys.modules["viur.core"]
 
@@ -160,6 +169,7 @@ def _install_transport_stub() -> None:
 def _install_all_stubs() -> None:
     _install_request_stub()
     _install_module_stub()
+    _install_setup_stub()
     _install_decorators_stub()
     _install_config_stub()
     _install_current_request_stub()

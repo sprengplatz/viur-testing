@@ -36,8 +36,16 @@ class _FakeEntity(dict):
 
 
 class _FakeClient:
-    def __init__(self, database, project="proj-x", refuse_database=False):
+    def __init__(
+        self,
+        database,
+        project="proj-x",
+        namespace=None,
+        refuse_database=False,
+        refuse_namespace=False,
+    ):
         self.database = None if refuse_database else database
+        self.namespace = None if refuse_namespace else namespace
         self.project = project
         self._store: dict = {}
         self.put_calls = 0
@@ -60,7 +68,7 @@ class _FakeClient:
 
 def _install_fake_datastore_module(monkeypatch, *, client: _FakeClient):
     fake_mod = types.ModuleType("google.cloud.datastore")
-    fake_mod.Client = lambda database, **kwargs: client
+    fake_mod.Client = lambda **kwargs: client
     fake_mod.Entity = _FakeEntity
     monkeypatch.setitem(sys.modules, "google.cloud.datastore", fake_mod)
 
@@ -118,6 +126,57 @@ def test_build_test_client_refuses_when_database_ignored(monkeypatch):
     _install_fake_datastore_module(monkeypatch, client=client)
     with pytest.raises(RuntimeError, match="did not honour database"):
         activation._build_test_client("viur-tests")
+
+
+def _install_fake_datastore_capturing(monkeypatch, *, client: _FakeClient, captured: dict):
+    """Variant of :func:`_install_fake_datastore_module` whose Client
+    factory records the kwargs it was called with."""
+    def _capture(**kwargs):
+        captured.update(kwargs)
+        return client
+
+    fake_mod = types.ModuleType("google.cloud.datastore")
+    fake_mod.Client = _capture
+    fake_mod.Entity = _FakeEntity
+    monkeypatch.setitem(sys.modules, "google.cloud.datastore", fake_mod)
+
+    google_pkg = sys.modules.get("google") or types.ModuleType("google")
+    google_cloud = sys.modules.get("google.cloud") or types.ModuleType("google.cloud")
+    google_cloud.datastore = fake_mod
+    google_pkg.cloud = google_cloud
+    monkeypatch.setitem(sys.modules, "google", google_pkg)
+    monkeypatch.setitem(sys.modules, "google.cloud", google_cloud)
+
+
+def test_build_test_client_passes_namespace_when_given(monkeypatch):
+    """When ``namespace`` is given, the datastore.Client constructor must
+    receive the ``namespace=`` kwarg and the returned client's
+    ``namespace`` attribute is checked for consistency."""
+    captured: dict = {}
+    client = _FakeClient(database="viur-tests", namespace="alice")
+    _install_fake_datastore_capturing(monkeypatch, client=client, captured=captured)
+
+    result = activation._build_test_client("viur-tests", namespace="alice")
+    assert result is client
+    assert captured == {"database": "viur-tests", "namespace": "alice"}
+
+
+def test_build_test_client_omits_namespace_when_none(monkeypatch):
+    """Without a namespace, the kwarg must NOT be passed at all so the
+    client falls back to the Datastore default namespace."""
+    captured: dict = {}
+    client = _FakeClient(database="viur-tests")
+    _install_fake_datastore_capturing(monkeypatch, client=client, captured=captured)
+
+    activation._build_test_client("viur-tests")
+    assert "namespace" not in captured
+
+
+def test_build_test_client_refuses_when_namespace_ignored(monkeypatch):
+    client = _FakeClient(database="viur-tests", namespace="alice", refuse_namespace=True)
+    _install_fake_datastore_module(monkeypatch, client=client)
+    with pytest.raises(RuntimeError, match="did not honour namespace"):
+        activation._build_test_client("viur-tests", namespace="alice")
 
 
 def test_probe_roundtrip_writes_and_reads(monkeypatch):
@@ -188,11 +247,13 @@ def test_open_bootstrap_paths_in_closed_system_appends_paths(conf_instance):
         _open_bootstrap_paths_in_closed_system()
 
         paths = list(conf_instance_module.conf.security.closed_system_allowed_paths)
-        # Concrete and wildcard variants both appear — see _BOOTSTRAP_OPEN_PATHS.
-        assert "_test/config/status" in paths
-        assert "_test/config/finish" in paths
-        assert "_test/config/*" in paths
-        assert "*/_test/config/*" in paths
+        # Every entry from _BOOTSTRAP_OPEN_PATHS must end up in the
+        # allow-list — this covers both the built-in config bootstrap
+        # and any host-registered fixture submodule under /_test/.
+        from viur.testing.activation import _BOOTSTRAP_OPEN_PATHS
+
+        for pattern in _BOOTSTRAP_OPEN_PATHS:
+            assert pattern in paths, f"expected {pattern!r} in allow-list, got {paths!r}"
         # existing entries are preserved
         assert "index" in paths
     finally:
@@ -216,7 +277,13 @@ def test_open_bootstrap_paths_in_closed_system_is_idempotent(conf_instance):
         _open_bootstrap_paths_in_closed_system()
         _open_bootstrap_paths_in_closed_system()  # second call no-ops
         paths = list(conf_instance_module.conf.security.closed_system_allowed_paths)
-        assert paths.count("_test/config/status") == 1
+        from viur.testing.activation import _BOOTSTRAP_OPEN_PATHS
+
+        # Every bootstrap pattern appears exactly once even after two calls.
+        for pattern in _BOOTSTRAP_OPEN_PATHS:
+            assert paths.count(pattern) == 1, (
+                f"{pattern!r} appears {paths.count(pattern)} times, expected exactly 1"
+            )
     finally:
         if original_security is None:
             del conf_instance_module.conf.security
@@ -238,18 +305,83 @@ def _install_fake_db_types_module(monkeypatch, capture: list):
     return Key
 
 
-def test_patch_key_factory_no_op_when_client_has_no_database(monkeypatch):
-    """A default-DB client (database=None) leaves Key.__init__ alone."""
+def test_patch_key_factory_no_op_when_client_has_no_database_and_namespace(monkeypatch):
+    """A default-DB client with no namespace (both None) leaves Key.__init__ alone."""
     captured: list = []
     Key = _install_fake_db_types_module(monkeypatch, captured)
 
     class _DefaultClient:
         database = None
+        namespace = None
 
     activation._patch_key_factory(_DefaultClient())
 
     Key("kind", "id")
     assert captured == [{"path": ("kind", "id"), "project": None, "kwargs": {}}]
+
+
+def test_patch_key_factory_sets_default_namespace(monkeypatch):
+    captured: list = []
+    Key = _install_fake_db_types_module(monkeypatch, captured)
+
+    class _Client:
+        database = "viur-tests"
+        namespace = "alice"
+
+    activation._patch_key_factory(_Client())
+
+    Key("kind", "id")
+    assert captured[-1]["kwargs"]["database"] == "viur-tests"
+    assert captured[-1]["kwargs"]["namespace"] == "alice"
+
+
+def test_patch_key_factory_preserves_explicit_namespace(monkeypatch):
+    captured: list = []
+    Key = _install_fake_db_types_module(monkeypatch, captured)
+
+    class _Client:
+        database = "viur-tests"
+        namespace = "alice"
+
+    activation._patch_key_factory(_Client())
+
+    Key("kind", "id", namespace="other")
+    assert captured[-1]["kwargs"]["namespace"] == "other"
+
+
+def test_patch_key_factory_skips_database_when_client_has_only_namespace(monkeypatch):
+    """A client with only a namespace (no database) must still patch the
+    namespace default — but must NOT inject a ``database=None`` kwarg."""
+    captured: list = []
+    Key = _install_fake_db_types_module(monkeypatch, captured)
+
+    class _NamespaceOnlyClient:
+        database = None
+        namespace = "alice"
+
+    activation._patch_key_factory(_NamespaceOnlyClient())
+
+    Key("kind", "id")
+    assert "database" not in captured[-1]["kwargs"]
+    assert captured[-1]["kwargs"]["namespace"] == "alice"
+
+
+def test_patch_key_factory_omits_namespace_when_client_has_none(monkeypatch):
+    """If the client has no namespace, the patch must not synthesise one
+    — otherwise plain ``datastore.Key("kind", "id")`` would land in the
+    default namespace explicitly, which behaves differently from the
+    implicit default in some Datastore client versions."""
+    captured: list = []
+    Key = _install_fake_db_types_module(monkeypatch, captured)
+
+    class _Client:
+        database = "viur-tests"
+        namespace = None
+
+    activation._patch_key_factory(_Client())
+
+    Key("kind", "id")
+    assert "namespace" not in captured[-1]["kwargs"]
 
 
 def test_patch_key_factory_sets_default_database(monkeypatch):
@@ -278,6 +410,71 @@ def test_patch_key_factory_preserves_explicit_database(monkeypatch):
 
     Key("kind", "id", database="other")
     assert captured[-1]["kwargs"]["database"] == "other"
+
+
+def _install_fake_gcds_key(monkeypatch):
+    """Install a fake ``google.cloud.datastore.key`` module whose Key's
+    ``to_legacy_urlsafe`` simulates the real one: raises if
+    ``self._database`` is set."""
+    mod = types.ModuleType("google.cloud.datastore.key")
+
+    class Key:
+        def __init__(self, *path_args, project=None, **kwargs):
+            self._project = project
+            self._database = kwargs.get("database")
+            self._namespace = kwargs.get("namespace")
+            self._path = path_args
+
+        def to_legacy_urlsafe(self, location_prefix=None):
+            if self._database:
+                raise ValueError("to_legacy_urlsafe only supports the default database")
+            return f"<urlsafe:{self._project}:{self._namespace}:{self._path}>".encode()
+
+    mod.Key = Key
+    monkeypatch.setitem(sys.modules, "google.cloud.datastore.key", mod)
+    return Key
+
+
+def test_patch_legacy_urlsafe_works_around_check_on_named_db(monkeypatch):
+    """``key.to_legacy_urlsafe()`` on a Key with ``_database`` set must not crash."""
+    Key = _install_fake_gcds_key(monkeypatch)
+    activation._patch_legacy_urlsafe()
+
+    k = Key("user", "abc", database="viur-tests", namespace="alice")
+    # Before the patch this would raise; after the patch we get the urlsafe form.
+    result = k.to_legacy_urlsafe()
+    assert b"viur-tests" not in result  # database is stripped during serialisation
+    assert k._database == "viur-tests"  # but restored on the live key
+
+
+def test_patch_legacy_urlsafe_passes_through_for_default_db(monkeypatch):
+    """A Key without ``_database`` is serialised unchanged."""
+    Key = _install_fake_gcds_key(monkeypatch)
+    activation._patch_legacy_urlsafe()
+
+    k = Key("user", "abc")
+    assert k._database is None
+    result = k.to_legacy_urlsafe()
+    assert k._database is None
+    assert result == b"<urlsafe:None:None:('user', 'abc')>"
+
+
+def test_patch_legacy_urlsafe_restores_database_on_exception(monkeypatch):
+    """If the underlying to_legacy_urlsafe raises after we cleared
+    _database, the finally block must put it back so the key is not
+    corrupted."""
+    Key = _install_fake_gcds_key(monkeypatch)
+
+    def _explode(_self, location_prefix=None):
+        raise RuntimeError("boom")
+
+    Key.to_legacy_urlsafe = _explode
+    activation._patch_legacy_urlsafe()
+
+    k = Key("user", "abc", database="viur-tests")
+    with pytest.raises(RuntimeError, match="boom"):
+        k.to_legacy_urlsafe()
+    assert k._database == "viur-tests"  # restored
 
 
 def test_patch_key_factory_preserves_other_kwargs(monkeypatch):
@@ -313,6 +510,12 @@ def _stub_patch_key_factory(monkeypatch, sink):
     )
 
 
+def _stub_patch_legacy_urlsafe(monkeypatch, sink):
+    monkeypatch.setattr(
+        activation, "_patch_legacy_urlsafe", lambda: sink.append("called")
+    )
+
+
 def _stub_open_bootstrap_paths(monkeypatch, sink):
     monkeypatch.setattr(
         activation,
@@ -329,6 +532,7 @@ def test_activate_happy_path(monkeypatch, router_validators):
     _stub_patch_transport(monkeypatch, sink)
     key_sink: list = []
     _stub_patch_key_factory(monkeypatch, key_sink)
+    _stub_patch_legacy_urlsafe(monkeypatch, [])
     open_paths_sink: list = []
     _stub_open_bootstrap_paths(monkeypatch, open_paths_sink)
 
@@ -386,11 +590,74 @@ def test_activate_propagates_database_mismatch(monkeypatch):
     assert not ConfigModule.is_active()
 
 
+def test_activate_propagates_namespace_to_config_module(monkeypatch, router_validators):
+    """When ``activate(namespace=…)`` is called the ConfigModule's
+    in-process state must reflect it so ``/_test/config/status`` can
+    report it back to runners."""
+    client = _FakeClient(database="viur-tests", project="proj-z", namespace="alice")
+    _install_fake_datastore_module(monkeypatch, client=client)
+
+    _stub_patch_transport(monkeypatch, [])
+    _stub_patch_key_factory(monkeypatch, [])
+    _stub_patch_legacy_urlsafe(monkeypatch, [])
+    _stub_open_bootstrap_paths(monkeypatch, [])
+
+    activation.activate(database="viur-tests", namespace="alice")
+
+    assert ConfigModule.current_namespace() == "alice"
+
+
+def test_activate_default_namespace_is_none(monkeypatch, router_validators):
+    client = _FakeClient(database="viur-tests", project="proj-z")
+    _install_fake_datastore_module(monkeypatch, client=client)
+    _stub_patch_transport(monkeypatch, [])
+    _stub_patch_key_factory(monkeypatch, [])
+    _stub_patch_legacy_urlsafe(monkeypatch, [])
+    _stub_open_bootstrap_paths(monkeypatch, [])
+
+    activation.activate(database="viur-tests")
+    assert ConfigModule.current_namespace() is None
+
+
+def test_activate_installs_banner_patch(monkeypatch, router_validators):
+    """A successful activate() must wrap ``viur.core.setup`` so the boot
+    banner gains the ``database = ...`` line."""
+    client = _FakeClient(database="viur-tests")
+    _install_fake_datastore_module(monkeypatch, client=client)
+    _stub_patch_transport(monkeypatch, [])
+    _stub_patch_key_factory(monkeypatch, [])
+    _stub_patch_legacy_urlsafe(monkeypatch, [])
+    _stub_open_bootstrap_paths(monkeypatch, [])
+
+    activation.activate(database="viur-tests")
+
+    from viur.testing.banner import _PATCH_SENTINEL_ATTR
+
+    viur_core = sys.modules["viur.core"]
+    assert getattr(viur_core.setup, _PATCH_SENTINEL_ATTR, False) is True
+
+
+def test_activate_calls_patch_legacy_urlsafe(monkeypatch, router_validators):
+    """activate() must wire the to_legacy_urlsafe named-DB workaround
+    so str(key) works after login."""
+    client = _FakeClient(database="viur-tests")
+    _install_fake_datastore_module(monkeypatch, client=client)
+    _stub_patch_transport(monkeypatch, [])
+    _stub_patch_key_factory(monkeypatch, [])
+    called: list = []
+    _stub_patch_legacy_urlsafe(monkeypatch, called)
+    _stub_open_bootstrap_paths(monkeypatch, [])
+
+    activation.activate(database="viur-tests")
+    assert called == ["called"]
+
+
 def test_activate_uses_default_database_name(monkeypatch):
     client = _FakeClient(database="viur-tests")
     _install_fake_datastore_module(monkeypatch, client=client)
     _stub_patch_transport(monkeypatch, [])
     _stub_patch_key_factory(monkeypatch, [])
+    _stub_patch_legacy_urlsafe(monkeypatch, [])
     _stub_open_bootstrap_paths(monkeypatch, [])
 
     activation.activate()

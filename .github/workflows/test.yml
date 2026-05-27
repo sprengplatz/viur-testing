@@ -25,14 +25,14 @@ jobs:
           cache: pip
           cache-dependency-path: pyproject.toml
 
-      - name: Install (skip viur-core runtime dep — mocked by viur-light-mock)
+      - name: Install (skip viur-core runtime dep — mocked by spltz-viur-light-mock)
         run: |
           python -m pip install --upgrade pip
           python -m pip install --no-deps -e .
-          # Pull only the test extras (pytest, pytest-cov, viur-light-mock).
-          # ``viur-light-mock`` provides the viur.core stand-ins via its
+          # Pull only the test extras (pytest, pytest-cov, spltz-viur-light-mock).
+          # ``spltz-viur-light-mock`` provides the viur.core stand-ins via its
           # pytest11 entry-point, so the real viur-core is never needed.
-          python -m pip install pytest pytest-cov 'coverage[toml]' viur-light-mock
+          python -m pip install pytest pytest-cov 'coverage[toml]' spltz-viur-light-mock
 
       - name: Run tests
         run: pytest

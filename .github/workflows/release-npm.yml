@@ -1,0 +1,166 @@
+name: Release (npm)
+
+on:
+  push:
+    tags:
+      # Manifest-as-source-of-truth: the `<version>` between `v` and
+      # `-npm` must match `playwright/package.json`'s `version` exactly.
+      # Examples:
+      #   v0.2.0-npm        — stable
+      #   v0.2.0-rc.1-npm   — release candidate (SemVer pre-release)
+      - "v*-npm"
+
+permissions:
+  contents: read
+
+jobs:
+  # ----- Gate 1: TypeScript build must compile cleanly ----------------------
+  build-check:
+    name: tsc build
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install + build
+        working-directory: playwright
+        run: |
+          npm ci
+          npm run build
+
+  # ----- Verify the tag matches package.json `version` ----------------------
+  version-check:
+    name: Tag vs. package.json
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Compare
+        run: |
+          # Strip the leading "v" and trailing "-npm" from the tag name.
+          TAG="${GITHUB_REF_NAME#v}"
+          TAG="${TAG%-npm}"
+          PKG=$(node -e "console.log(require('./playwright/package.json').version)")
+          echo "Tag (stripped): $TAG"
+          echo "Package:        $PKG"
+          if [ "$TAG" != "$PKG" ]; then
+            echo "::error::Tag ($TAG) does not match package.json version ($PKG). Manifest is the single source of truth — bump playwright/package.json before tagging."
+            exit 1
+          fi
+
+  # ----- Build the npm tarball ----------------------------------------------
+  build:
+    name: Build npm package
+    needs: [build-check, version-check]
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install + build
+        working-directory: playwright
+        run: |
+          npm ci
+          npm run build
+
+      - name: Pack tarball
+        working-directory: playwright
+        run: npm pack --pack-destination ../npm-dist
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: npm-dist
+          path: npm-dist/
+
+  # ----- Publish to npm via OIDC Trusted Publishing + provenance ------------
+  #
+  # Setup on the npm side (one-time, per package):
+  #   npm package `@spltz/viur-testing` → Settings → Trusted publisher
+  #   - Repository:      sprengplatz/viur-testing
+  #   - Workflow:        release-npm.yml
+  #   - Environment:     npm
+  # `npm publish --provenance` attaches a sigstore attestation tied to
+  # this workflow run; no NPM_TOKEN secret needed.
+  publish:
+    name: Publish to npm
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: npm
+      url: https://www.npmjs.com/package/@spltz/viur-testing
+    permissions:
+      id-token: write   # OIDC trusted publishing + sigstore provenance
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+
+      - name: Install + build (clean room)
+        working-directory: playwright
+        run: |
+          npm ci
+          npm run build
+
+      - name: Publish
+        working-directory: playwright
+        run: npm publish --provenance --access public
+
+  # ----- Cut GitHub Release with the npm tarball attached -------------------
+  release:
+    name: Create GitHub Release
+    needs: [build, publish]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download npm dist
+        uses: actions/download-artifact@v4
+        with:
+          name: npm-dist
+          path: npm-dist/
+
+      - name: Determine pre-release flag
+        id: prerelease
+        run: |
+          # SemVer pre-releases contain a `-` after the patch component
+          # (e.g. 0.2.0-rc.1). Stripping `v` and trailing `-npm` leaves
+          # the bare SemVer; any remaining `-` means pre-release.
+          TAG="${GITHUB_REF_NAME#v}"
+          TAG="${TAG%-npm}"
+          if [[ "$TAG" == *-* ]]; then
+            echo "value=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "value=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: "npm ${{ github.ref_name }}"
+          generate_release_notes: true
+          prerelease: ${{ steps.prerelease.outputs.value }}
+          files: |
+            npm-dist/*.tgz
