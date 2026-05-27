@@ -1,7 +1,6 @@
 {
   "name": "@spltz/viur-testing",
   "version": "0.1.0",
-  "private": true,
   "description": "Playwright fixtures, global setup/teardown, helpers and a Vite plugin for projects driven by viur-testing.",
   "type": "module",
   "main": "./dist/index.js",
@@ -24,7 +23,7 @@
     }
   },
   "bin": {
-    "viur-testing-init": "./bin/init.mjs"
+    "viur-testing-init": "bin/init.mjs"
   },
   "files": [
     "bin",
