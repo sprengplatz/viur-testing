@@ -78,7 +78,9 @@ jobs:
 
       - name: Pack tarball
         working-directory: playwright
-        run: npm pack --pack-destination ../npm-dist
+        run: |
+          mkdir -p ../npm-dist
+          npm pack --pack-destination ../npm-dist
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
