@@ -2,6 +2,17 @@
   "name": "@spltz/viur-testing",
   "version": "0.1.1",
   "description": "Playwright fixtures, global setup/teardown, helpers and a Vite plugin for projects driven by viur-testing.",
+  "license": "MIT",
+  "author": "Andreas H. Kelch",
+  "homepage": "https://github.com/sprengplatz/viur-testing#readme",
+  "bugs": {
+    "url": "https://github.com/sprengplatz/viur-testing/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/sprengplatz/viur-testing.git",
+    "directory": "playwright"
+  },
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
