@@ -88,15 +88,18 @@ jobs:
           name: npm-dist
           path: npm-dist/
 
-  # ----- Publish to npm via OIDC Trusted Publishing + provenance ------------
+  # ----- Publish to npm via OIDC Trusted Publishing -------------------------
   #
   # Setup on the npm side (one-time, per package):
   #   npm package `@spltz/viur-testing` → Settings → Trusted publisher
   #   - Repository:      sprengplatz/viur-testing
   #   - Workflow:        release-npm.yml
   #   - Environment:     npm
-  # `npm publish --provenance` attaches a sigstore attestation tied to
-  # this workflow run; no NPM_TOKEN secret needed.
+  # No NPM_TOKEN secret needed — npm CLI (>= 11.5.1) exchanges the
+  # GitHub OIDC token for a short-lived publish credential automatically.
+  #
+  # `--provenance` is intentionally omitted: sigstore provenance requires
+  # the source GitHub repo to be public, which this one is not.
   publish:
     name: Publish to npm
     needs: build
@@ -127,7 +130,7 @@ jobs:
 
       - name: Publish
         working-directory: playwright
-        run: npm publish --provenance --access public
+        run: npm publish --access public
 
   # ----- Cut GitHub Release with the npm tarball attached -------------------
   release:
