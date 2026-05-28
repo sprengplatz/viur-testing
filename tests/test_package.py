@@ -136,9 +136,20 @@ def test_load_project_api_resolves_path_relative_to_caller(tmp_path):
 
 def test_load_project_api_walks_stack_when_caller_file_is_none(monkeypatch, tmp_path):
     """Without explicit `caller_file`, the function walks the call
-    stack via inspect.stack to find the original caller of `setup`."""
+    stack and anchors at the first frame whose file lives *outside*
+    ``viur.testing`` — that is the host-side ``main.py`` (or the
+    closest host-side wrapper that called ``setup``).
+
+    A previous implementation used a hard-coded ``stack()[2]`` offset
+    which silently broke as soon as any frame slipped in between
+    (decorator, helper, conditional re-entry). This test exercises
+    the new walk: ``stack[1]`` mimics ``setup()`` (file inside our
+    package — must be skipped), ``stack[2]`` mimics the host's
+    ``main.py`` (must be picked).
+    """
     import inspect
-    from viur.testing import _load_project_api
+    import os
+    from viur.testing import _PACKAGE_DIR, _load_project_api
 
     deploy_dir = tmp_path / "deploy"
     deploy_dir.mkdir()
@@ -149,14 +160,19 @@ def test_load_project_api_walks_stack_when_caller_file_is_none(monkeypatch, tmp_
     api_pkg.mkdir(parents=True)
     (api_pkg / "__init__.py").write_text("MARKER = 'via-stack'\n")
 
-    # Fake stack[2] (caller-of-setup) to point at our temp main.py.
+    inside_pkg = os.path.join(_PACKAGE_DIR, "__init__.py")
+
     class _Frame:
         def __init__(self, filename: str) -> None:
             self.filename = filename
 
     monkeypatch.setattr(
         inspect, "stack",
-        lambda: [_Frame("_load_project_api"), _Frame("setup"), _Frame(str(fake_main))],
+        lambda: [
+            _Frame(inside_pkg),       # stack[0]: _load_project_api itself
+            _Frame(inside_pkg),       # stack[1]: setup() — skipped by the walk
+            _Frame(str(fake_main)),   # stack[2]: host main.py — picked
+        ],
     )
 
     import sys
@@ -166,6 +182,74 @@ def test_load_project_api_walks_stack_when_caller_file_is_none(monkeypatch, tmp_
         assert sys.modules["api"].MARKER == "via-stack"
     finally:
         sys.modules.pop("api", None)
+
+
+def test_load_project_api_skips_extra_internal_frames(monkeypatch, tmp_path):
+    """The walk must skip *every* viur.testing frame, not just one.
+    Future internal helpers between :func:`setup` and
+    :func:`_load_project_api` (decorators, validation steps, ...) must
+    not change the resolved anchor."""
+    import inspect
+    import os
+    from viur.testing import _PACKAGE_DIR, _load_project_api
+
+    deploy_dir = tmp_path / "deploy"
+    deploy_dir.mkdir()
+    fake_main = deploy_dir / "main.py"
+    fake_main.write_text("# stub\n")
+
+    api_pkg = tmp_path / "testing" / "api"
+    api_pkg.mkdir(parents=True)
+    (api_pkg / "__init__.py").write_text("MARKER = 'via-deep-stack'\n")
+
+    inside_pkg = os.path.join(_PACKAGE_DIR, "__init__.py")
+
+    class _Frame:
+        def __init__(self, filename: str) -> None:
+            self.filename = filename
+
+    monkeypatch.setattr(
+        inspect, "stack",
+        lambda: [
+            _Frame(inside_pkg),       # _load_project_api
+            _Frame(inside_pkg),       # internal helper #1
+            _Frame(inside_pkg),       # internal helper #2
+            _Frame(inside_pkg),       # setup()
+            _Frame(str(fake_main)),   # host main.py — must still be picked
+        ],
+    )
+
+    import sys
+    sys.modules.pop("api", None)
+    try:
+        _load_project_api("testing")
+        assert sys.modules["api"].MARKER == "via-deep-stack"
+    finally:
+        sys.modules.pop("api", None)
+
+
+def test_load_project_api_raises_when_no_host_frame(monkeypatch):
+    """Pathological: every frame on the stack is inside ``viur.testing``.
+    Shouldn't happen in practice — :func:`setup` is always called from
+    the host's ``main.py`` — but if it ever does, fail loudly with a
+    pointer to the explicit-override escape hatch."""
+    import inspect
+    import os
+    from viur.testing import _PACKAGE_DIR, _load_project_api
+
+    inside_pkg = os.path.join(_PACKAGE_DIR, "__init__.py")
+
+    class _Frame:
+        def __init__(self, filename: str) -> None:
+            self.filename = filename
+
+    monkeypatch.setattr(
+        inspect, "stack",
+        lambda: [_Frame(inside_pkg), _Frame(inside_pkg)],
+    )
+
+    with pytest.raises(RuntimeError, match="host-side frame"):
+        _load_project_api("testing")
 
 
 def test_setup_skips_api_loading_when_test_mode_off(monkeypatch, tmp_path):

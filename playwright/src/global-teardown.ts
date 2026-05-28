@@ -14,19 +14,20 @@
  */
 
 import { existsSync, readFileSync, unlinkSync } from "node:fs"
-import { resolve } from "node:path"
 
 import { finishTestMode, type ServerStatus } from "./test-mode.js"
+import { tokenFilePath } from "./token-storage.js"
 
 export interface GlobalTeardownOptions {
-  /** Path to the token persistence file. Default: `<cwd>/.auth/token.json`. */
-  tokenFile?: string
+  // intentionally empty — kept for forward-compat in case the
+  // teardown ever needs configuration. The token file location is
+  // hard-coded via :func:`tokenFilePath` so it cannot drift away
+  // from what the fixtures/test-module helpers read back.
 }
 
-export function createGlobalTeardown(opts: GlobalTeardownOptions = {}): () => Promise<void> {
-  const tokenFile = opts.tokenFile ?? resolve(process.cwd(), ".auth", "token.json")
-
+export function createGlobalTeardown(_opts: GlobalTeardownOptions = {}): () => Promise<void> {
   return async function globalTeardown(): Promise<void> {
+    const tokenFile = tokenFilePath()
     if (!existsSync(tokenFile)) {
       return
     }

@@ -164,6 +164,60 @@ def test_register_submodule_rejects_empty_name():
         TestModule.register_submodule("", _DummyTestSpec)
 
 
+@pytest.mark.parametrize(
+    "bad_name",
+    [
+        # Leading underscore — would collide with module-internal attrs.
+        "_methods",
+        "_modules",
+        # Dunder.
+        "__init__",
+        # Dot / slash — would either break setattr or invent routes.
+        "user.login",
+        "user/login",
+        # Whitespace / non-ASCII.
+        "user login",
+        "user-löschen",
+        # Starts with digit — not a valid Python attribute prefix.
+        "1login",
+        # Empty after lowercasing-only-symbols (regex still rejects).
+        "----",
+    ],
+)
+def test_register_submodule_rejects_malformed_names(bad_name):
+    """Names must be safe to use as both a Python attribute and a URL
+    segment. Anything outside ``^[a-z][a-z0-9_-]*$`` is refused so
+    surprising routing/attribute-collision bugs cannot sneak in."""
+    with pytest.raises(ValueError, match="must match"):
+        TestModule.register_submodule(bad_name, _DummyTestSpec)
+
+
+@pytest.mark.parametrize(
+    "shadowing_name",
+    [
+        # Renderer flag — overwriting this disables route registration
+        # via viur-core's __build_app render-name opt-in scan.
+        "json",
+        # viur-core Module class attribute — overwriting it would break
+        # viur-core's mounting/auth path.
+        "handler",
+    ],
+)
+def test_register_submodule_rejects_attribute_shadowing(shadowing_name):
+    """Names that already exist as class attributes on ``TestModule``
+    (or its bases) must be refused — they would silently break either
+    viur-core mounting or test-mode internals.
+
+    Note: this is a class-level ``hasattr`` check. Instance-only attrs
+    set in ``__init__`` (``moduleName``, ``modulePath``) are not on
+    the class and therefore *not* caught here — but those happen to
+    also be camelCased and would be lowercased by ``register_submodule``
+    before lookup, so the registered name does not actually shadow
+    the camelCased instance attr."""
+    with pytest.raises(ValueError, match="shadow"):
+        TestModule.register_submodule(shadowing_name, _DummyTestSpec)
+
+
 def test_register_submodule_overwrites_previous_for_same_name(activated):
     """Re-registering ``userLogin`` replaces the previous class — the
     last wins, no silent merge."""

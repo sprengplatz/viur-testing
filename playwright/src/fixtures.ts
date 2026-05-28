@@ -23,18 +23,17 @@
 
 import { test as base, expect, type APIRequestContext, type BrowserContext } from "@playwright/test"
 import { readFileSync } from "node:fs"
-import { resolve } from "node:path"
 
 import { TOKEN_HEADER, authenticatedApi, type ServerStatus } from "./test-mode.js"
-
-const TOKEN_FILE = resolve(process.cwd(), ".auth", "token.json")
+import { tokenFilePath } from "./token-storage.js"
 
 function loadServerStatus(): ServerStatus {
+  const path = tokenFilePath()
   try {
-    return JSON.parse(readFileSync(TOKEN_FILE, "utf8")) as ServerStatus
+    return JSON.parse(readFileSync(path, "utf8")) as ServerStatus
   } catch (err) {
     throw new Error(
-      `Could not read viur-testing session info from ${TOKEN_FILE}. ` +
+      `Could not read viur-testing session info from ${path}. ` +
         `Did globalSetup run? Original error: ${(err as Error).message}`,
     )
   }
@@ -47,28 +46,50 @@ export interface TestModeFixtures {
   backendApi: APIRequestContext
 }
 
-export const test = base.extend<TestModeFixtures>({
+interface TestModeWorkerFixtures {
+  /**
+   * Worker-scoped cache of the server status JSON, populated by reading
+   * `.auth/token.json` exactly once per worker process. Both the
+   * `context` override and the `backendApi` fixture (and the
+   * `serverStatus` fixture itself) consume this so the JSON file is
+   * not re-read for every spec.
+   *
+   * Underscore-prefixed and not re-exported as part of the public
+   * surface — it is an implementation detail, callers go through
+   * `serverStatus`/`backendApi`/`context` instead.
+   */
+  _viurTestingStatus: ServerStatus
+}
+
+export const test = base.extend<TestModeFixtures, TestModeWorkerFixtures>({
+  _viurTestingStatus: [
+    async ({}, use) => {
+      await use(loadServerStatus())
+    },
+    { scope: "worker" },
+  ],
+
   // Override the built-in `context` fixture so every page gets the
   // token header on every request automatically. Pages spawned via
   // `await context.newPage()` and via the standard `page` fixture
   // both inherit this.
-  context: async ({ browser }, use) => {
-    const status = loadServerStatus()
+  context: async ({ browser, _viurTestingStatus }, use) => {
     const ctx: BrowserContext = await browser.newContext({
-      extraHTTPHeaders: { [TOKEN_HEADER]: status.token },
+      extraHTTPHeaders: { [TOKEN_HEADER]: _viurTestingStatus.token },
     })
     await use(ctx)
     await ctx.close()
   },
 
-  serverStatus: async ({}, use) => {
-    await use(loadServerStatus())
+  serverStatus: async ({ _viurTestingStatus }, use) => {
+    await use(_viurTestingStatus)
   },
 
-  backendApi: async ({}, use) => {
-    const status = loadServerStatus()
+  backendApi: async ({ _viurTestingStatus }, use) => {
     const backendUrl = process.env.E2E_BACKEND_URL ?? "http://localhost:8080"
-    const ctx = await authenticatedApi({ backendUrl, token: status.token })
+    const ctx = await authenticatedApi({
+      backendUrl, token: _viurTestingStatus.token,
+    })
     await use(ctx)
     await ctx.dispose()
   },

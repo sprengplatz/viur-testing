@@ -103,6 +103,28 @@ def test_expected_namespace_none_asserts_default_namespace():
         )
 
 
+def test_expected_namespace_empty_string_asserts_default_namespace():
+    """``expected_namespace=""`` is treated the same as ``None`` so
+    callers can pass ``os.environ.get("VIUR_TESTING_NAMESPACE")``
+    straight through. The server-side convention from
+    :data:`VIUR_TESTING_NAMESPACE` already treats unset and empty
+    identically — the runner must mirror that."""
+    # Default namespace on the server → empty-string expectation passes.
+    opener, _ = _stub_opener(_server_payload("tok", namespace=None))
+    status = runner.require_test_mode(
+        "http://localhost", expected_namespace="", _opener=opener,
+    )
+    assert status.namespace is None
+
+    # Non-default namespace → empty-string expectation fails (because
+    # "" is normalised to None and the server reports "alice").
+    opener, _ = _stub_opener(_server_payload("tok", namespace="alice"))
+    with pytest.raises(runner.TestModePreflightError, match="namespace="):
+        runner.require_test_mode(
+            "http://localhost", expected_namespace="", _opener=opener,
+        )
+
+
 def test_require_test_mode_strips_trailing_slash():
     opener, captured = _stub_opener(_server_payload("tok"))
     runner.require_test_mode("http://localhost:8080/", _opener=opener)

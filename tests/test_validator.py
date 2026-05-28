@@ -115,6 +115,38 @@ def test_validate_does_not_bypass_lookalike_paths():
     assert result[0] == 403
 
 
+@pytest.mark.parametrize(
+    "path",
+    [
+        # Deeper than 4 segments — even though the trailing chunk
+        # matches, a non-renderer first segment plus a normal
+        # ``_test/config/status`` further down was previously accepted
+        # by the suffix-endswith implementation. Now refused.
+        "/a/b/_test/config/status",
+        "/a/b/c/_test/config/finish",
+        # Trailing extra segment after the action.
+        "/_test/config/status/extra",
+        "/json/_test/config/finish/extra",
+        # Wrong action.
+        "/_test/config/teardown",
+        "/json/_test/config/foo",
+        # Wrong middle segment.
+        "/_test/configX/status",
+        "/json/_test/configX/status",
+        # Wrong _test segment.
+        "/_testX/config/status",
+    ],
+)
+def test_validate_does_not_bypass_oddly_shaped_paths(path):
+    """The defence-in-depth contract is: only ``/_test/config/<action>``
+    or ``/<renderer>/_test/config/<action>`` bypass the token. Anything
+    else must take the token-checked path."""
+    ConfigModule.set_active(database="viur-tests", project_id="p")
+    result = TokenValidator.validate(_make_request(headers={}, path=path))
+    assert result is not None
+    assert result[0] == 403
+
+
 @pytest.mark.parametrize("path", [None, ""])
 def test_validate_does_not_bypass_falsy_path(path):
     ConfigModule.set_active(database="viur-tests", project_id="p")

@@ -45,9 +45,15 @@ The init drops a working `package.json`, `tsconfig.json`,
 and an example spec. Files that already exist are skipped — re-runs
 are safe.
 
-The generated `vite.e2e.config.ts` contains a single `TODO` marker
-pointing at where to adjust the `appConfig` import to match your
-project's actual vite.config path.
+The generated `vite.e2e.config.ts` is a stand-alone backend-proxy
+config: it boots Vite on `:8081`, proxies the standard ViUR routes
+(`/vi`, `/json`, `/static`, `/resources`) to the backend on `:8080`,
+and stamps `X-Viur-Test-Token` on every forwarded request. Inline
+`TODO` markers point at the two values you usually want to review —
+the `BACKEND` constant and the proxy paths. If your project also has
+a Vite frontend whose `vite.config` you want to layer on top, the
+file has a commented `OVERLAY` block at the bottom showing the
+`mergeConfig(appConfig, e2eConfig)` form.
 
 ## Wiring
 
@@ -114,6 +120,15 @@ export default defineConfig({
 })
 ```
 
+The Vite plugin **refreshes the cached token automatically** — both
+when a proxied backend response comes back with HTTP 403 (the symptom
+of another runner having ended the session via `/_test/config/finish`
+while this Vite dev server was running) and after the configurable
+`refreshIntervalMs` (default: 1 hour) of idle time. A long-running
+`vite dev` session will therefore self-heal rather than serving 403s
+indefinitely. Pass `refreshIntervalMs: 0` to either factory to
+disable TTL refresh and keep only the 403 path.
+
 ## Environment variables
 
 Read by `createGlobalSetup()` (and indirectly by the fixtures):
@@ -123,6 +138,7 @@ Read by `createGlobalSetup()` (and indirectly by the fixtures):
 | `E2E_BACKEND_URL` | `http://localhost:8080` | Backend origin for preflight + APIRequestContexts. |
 | `E2E_TEST_DATABASE` | `viur-tests` | Asserted in preflight. |
 | `E2E_TEST_NAMESPACE` | _(unset)_ | Unset = skip namespace check; empty string = expect default namespace; non-empty = expect exact match. |
+| `E2E_TEST_PROJECT_ID` | _(unset)_ | When set, the server's reported GCP `project_id` must match exactly — useful in CI where the dev server is pinned to a specific project. |
 
 ## Hard guarantee
 

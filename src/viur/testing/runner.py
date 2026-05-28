@@ -120,8 +120,13 @@ def require_test_mode(
     :param expected_database: Database name we expect the server to be on.
         Default ``viur-tests``.
     :param expected_namespace: When supplied, the server's ``namespace``
-        must match exactly. Pass ``None`` to assert the server is on the
-        default namespace; omit the argument entirely to skip the check.
+        must match exactly. Pass ``None`` (or the empty string ``""``)
+        to assert the server is on the default namespace; omit the
+        argument entirely to skip the check. Empty string is normalised
+        to ``None`` so callers can pass ``os.environ.get(...)`` directly
+        without having to special-case unset vs. set-but-empty —
+        matches the server-side convention from
+        :data:`VIUR_TESTING_NAMESPACE`.
     :param expected_project_id: If set, the server's ``project_id`` must
         match. Use this when your CI knows which GCP project the dev
         server is bound to.
@@ -131,6 +136,9 @@ def require_test_mode(
         treat this as a hard stop and not run any test.
     :returns: A :class:`ServerStatus` snapshot, including the session token.
     """
+    if expected_namespace == "":
+        expected_namespace = None
+
     server = _do_request(_build_status_request(base_url), timeout, _opener)
 
     if server.get("test_mode") is not True:

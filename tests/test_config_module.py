@@ -175,6 +175,19 @@ def test_set_active_default_namespace_is_none():
     assert ConfigModule.current_namespace() is None
 
 
+def test_set_active_normalises_empty_namespace_to_none():
+    """``set_active(namespace="")`` must be treated the same as
+    ``namespace=None`` — otherwise a direct empty-string call followed
+    by an :func:`activate`-driven ``None`` call (which is how the
+    env-var path arrives) would falsely report a mismatch."""
+    ConfigModule.set_active(database="viur-tests", project_id="p", namespace="")
+    assert ConfigModule.current_namespace() is None
+
+    # And matches a subsequent None call without raising.
+    ConfigModule.set_active(database="viur-tests", project_id="p", namespace=None)
+    assert ConfigModule.current_namespace() is None
+
+
 def test_set_token_requires_active_state():
     with pytest.raises(RuntimeError, match="not active"):
         ConfigModule.set_token("x")

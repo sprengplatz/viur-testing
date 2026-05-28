@@ -62,7 +62,7 @@ from .constants import DEFAULT_DATABASE, TOKEN_HEADER
 from .protection import protect
 from .runner import ServerStatus, TestModePreflightError, finish, require_test_mode
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 __all__ = [
     "DEFAULT_DATABASE",
@@ -229,23 +229,47 @@ def setup(
     protect()
 
 
+_PACKAGE_DIR = _os.path.dirname(_os.path.abspath(__file__))
+"""Absolute directory of the ``viur.testing`` package on disk. The
+stack walk in :func:`_load_project_api` uses this as the boundary
+between "still inside our own helpers" and "back in host code"."""
+
+
 def _load_project_api(api_dir: str, caller_file: str | None = None) -> None:
     """Resolve ``<caller_parent>/<api_dir>/api/__init__.py`` and
     register it as top-level Python package ``api``.
 
-    The relative path is anchored at the host's ``main.py``; when
-    invoked from :func:`setup` we walk the stack via
-    ``inspect.stack`` to find that file. Tests can pass
-    ``caller_file`` directly to bypass the stack walk.
+    The relative path is anchored at the **first host-side frame** on
+    the call stack — i.e. the closest frame whose file is *not* inside
+    :data:`_PACKAGE_DIR`. The previous implementation used a hard-coded
+    ``inspect.stack()[2]`` offset which silently broke as soon as any
+    wrapper (test helper, decorator, host-side convenience function)
+    sat between ``main.py`` and :func:`setup`.
+
+    Tests can pass ``caller_file`` directly to bypass the stack walk.
 
     :param api_dir: Wrapper directory name (e.g. ``"testing"``).
     :param caller_file: Override for the host file used to anchor the
-        relative path. When ``None``, walks the call stack.
+        relative path. When ``None``, walks the call stack until it
+        finds a frame outside the ``viur.testing`` package.
+    :raises RuntimeError: when the stack walk cannot find a host frame
+        (e.g. every frame is inside ``viur.testing`` — should not
+        happen in practice, but fail loudly rather than guess).
     """
     if caller_file is None:
         import inspect  # noqa: PLC0415
-        # stack[0]=this fn, stack[1]=setup, stack[2]=caller of setup
-        caller_file = inspect.stack()[2].filename
+        for frame_info in inspect.stack()[1:]:
+            frame_file = _os.path.abspath(frame_info.filename)
+            if not frame_file.startswith(_PACKAGE_DIR + _os.sep):
+                caller_file = frame_file
+                break
+        if caller_file is None:
+            raise RuntimeError(
+                "viur.testing.setup(): could not find a host-side frame on "
+                "the call stack — pass `api_dir=None` to skip the project "
+                "API lookup, or call viur.testing._load_project_api(...) "
+                "with an explicit `caller_file=` argument."
+            )
     api_init = _os.path.abspath(_os.path.join(
         _os.path.dirname(caller_file), "..", api_dir, "api", "__init__.py",
     ))

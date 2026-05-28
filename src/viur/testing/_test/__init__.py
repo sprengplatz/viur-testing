@@ -28,11 +28,28 @@ Host wiring::
         _test = TestModule()  # mounts under /_test
 """
 
+import re
 import typing as t
 
 from viur.core import Module
 
 from .config import ConfigModule
+
+_SUBMODULE_NAME_RE = re.compile(r"^[a-z][a-z0-9_-]*$")
+"""Allowed shape for a host-registered submodule name.
+
+Starts with a lowercase ASCII letter, then any mix of lowercase letters,
+digits, ``_`` and ``-``. Rejects:
+
+- empty/None (caught separately for a better message),
+- leading underscores (would clash with module-internal attributes
+  like ``_methods``, ``_modules``),
+- dunders (``__init__``, ``__test__``, ...),
+- mixed case (URL routing lowercases anyway, so accepting uppercase
+  would only invite confusion),
+- non-ASCII characters and special chars like ``/``, ``.``, spaces
+  that would either break ``setattr`` or invent ambiguous routes.
+"""
 
 
 class TestModule(Module):
@@ -83,19 +100,51 @@ class TestModule(Module):
         as mixed-case while the request looks up ``userlogin`` — and
         the lookup would silently fail.
 
+        Three layered checks gate the name:
+
+        1. Empty/non-string rejected for a clear error.
+        2. After lower-casing, must match :data:`_SUBMODULE_NAME_RE`
+           (ASCII letter prefix + letters/digits/_-) so the name is
+           safely usable as a Python attribute and a URL segment.
+        3. Must not collide with any attribute already present on
+           ``TestModule`` (reserved submodules, renderer flags like
+           ``json``, inherited :class:`viur.core.Module` internals
+           like ``handler``/``accessRights``/``_methods``). The
+           ``hasattr`` check is intentionally permissive — a future
+           viur-core Module addition is caught automatically.
+
         :param name: URL segment under ``/_test/``. Lower-cased
-            internally. Must not clash with the names already used by
-            viur-testing itself (see :attr:`_RESERVED_SUBMODULE_NAMES`).
+            internally.
         :param module_cls: Subclass of ``viur.core.Module`` to mount.
-        :raises ValueError: when ``name`` is reserved or empty.
+        :raises ValueError: when ``name`` is empty, malformed,
+            reserved, or would shadow an existing TestModule attribute.
         """
         if not name:
             raise ValueError("Submodule name must be a non-empty string.")
         name = name.lower()
+        if not _SUBMODULE_NAME_RE.fullmatch(name):
+            raise ValueError(
+                f"Submodule name {name!r} must match {_SUBMODULE_NAME_RE.pattern!r}: "
+                "start with a lowercase ASCII letter, then ASCII letters, digits, "
+                "underscore or dash. Names with leading underscores, dunders, dots "
+                "or other special characters would clash with module-internal "
+                "attributes or break URL routing."
+            )
         if name in cls._RESERVED_SUBMODULE_NAMES:
             raise ValueError(
                 f"Submodule name {name!r} is reserved by viur-testing "
                 f"(reserved: {sorted(cls._RESERVED_SUBMODULE_NAMES)})."
+            )
+        # Previously-registered submodule names live in ``_user_submodules``
+        # (dict keys), not as class attributes — so ``hasattr`` does not
+        # catch them. The original overwrite-last-wins behaviour is
+        # preserved here intentionally; only attribute *collisions* are
+        # refused.
+        if hasattr(cls, name):
+            raise ValueError(
+                f"Submodule name {name!r} would shadow an existing attribute "
+                f"on {cls.__name__} (renderer flag, inherited Module attribute, "
+                "or class-level state). Pick a different name."
             )
         cls._user_submodules[name] = module_cls
 

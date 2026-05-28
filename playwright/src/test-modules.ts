@@ -20,18 +20,33 @@
  */
 
 import { readFileSync } from "node:fs"
-import { resolve } from "node:path"
+
+import type { APIRequestContext } from "@playwright/test"
 
 import { authenticatedApi, type ServerStatus } from "./test-mode.js"
+import { tokenFilePath } from "./token-storage.js"
 
-const TOKEN_FILE = resolve(process.cwd(), ".auth", "token.json")
+/**
+ * Cookie payload shape extracted from ``APIRequestContext.storageState()``.
+ *
+ * Derived from Playwright's own return type rather than hand-typed
+ * so the fields stay in sync if Playwright's Cookie shape evolves —
+ * the previous hand-written subset dropped ``sameSite``/``secure``/
+ * ``httpOnly``/``expires``, which broke flows where the backend set
+ * cookies with ``SameSite=Lax`` and the test then handed them off to
+ * a browser context via ``addCookies(...)``.
+ */
+type StorageCookie = Awaited<
+  ReturnType<APIRequestContext["storageState"]>
+>["cookies"][number]
 
 function loadStatus(): ServerStatus {
+  const path = tokenFilePath()
   try {
-    return JSON.parse(readFileSync(TOKEN_FILE, "utf8")) as ServerStatus
+    return JSON.parse(readFileSync(path, "utf8")) as ServerStatus
   } catch (err) {
     throw new Error(
-      `Cannot read ${TOKEN_FILE}. Did globalSetup run? ` +
+      `Cannot read ${path}. Did globalSetup run? ` +
         `Original error: ${(err as Error).message}`,
     )
   }
@@ -39,11 +54,14 @@ function loadStatus(): ServerStatus {
 
 export interface TestModuleResult<T> {
   body: T
-  /** Cookies in Playwright's `BrowserContext.addCookies(...)` shape, captured
-   *  from the response's `Set-Cookie` headers via the APIRequestContext's
-   *  storage state. Useful when a setup endpoint forges a session and the
-   *  spec wants to hand the resulting cookie to the browser. */
-  cookies: { name: string; value: string; domain: string; path: string }[]
+  /** Cookies in Playwright's `BrowserContext.addCookies(...)` shape,
+   *  captured from the response's `Set-Cookie` headers via the
+   *  APIRequestContext's storage state. Useful when a setup endpoint
+   *  forges a session and the spec wants to hand the resulting cookie
+   *  to the browser. Carries the full Playwright Cookie shape
+   *  (``sameSite``, ``secure``, ``httpOnly``, ``expires``) so a
+   *  ``SameSite=Lax`` cookie survives the handoff intact. */
+  cookies: StorageCookie[]
 }
 
 /**
@@ -85,12 +103,8 @@ export async function callTestModuleRaw<T = unknown>(
     }
     const body = (await resp.json()) as T
     const state = await api.storageState()
-    const cookies = state.cookies.map((c) => ({
-      name: c.name,
-      value: c.value,
-      domain: c.domain,
-      path: c.path,
-    }))
+    // Spread to detach from the storage-state internal array.
+    const cookies: StorageCookie[] = state.cookies.map((c) => ({ ...c }))
     return { body, cookies }
   } finally {
     await api.dispose()

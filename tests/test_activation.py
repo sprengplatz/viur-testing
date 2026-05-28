@@ -231,6 +231,25 @@ def test_patch_transport_client_replaces_singleton(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
+def test_bootstrap_open_paths_cover_every_renderer_prefix():
+    """The closed-system allow-list must accept ``/_test/...`` under any
+    renderer prefix (json/, vi/, html/, ...) plus the no-prefix variant.
+
+    Regression guard: an earlier version only listed ``json/_test/*``,
+    so hosts using ``vi/`` or ``html/`` renderers got 401 from
+    ``closed_system`` before the request even reached the TokenValidator.
+    """
+    from viur.testing.activation import _BOOTSTRAP_OPEN_PATHS
+
+    assert "*/_test/*" in _BOOTSTRAP_OPEN_PATHS, (
+        "renderer-agnostic wildcard missing — hosts on vi/ or html/ "
+        "would be 401'd by closed_system"
+    )
+    assert "_test/*" in _BOOTSTRAP_OPEN_PATHS, (
+        "no-prefix variant missing — renderer-less mounts would 401"
+    )
+
+
 def test_open_bootstrap_paths_in_closed_system_appends_paths(conf_instance):
     """activate() must extend conf.security.closed_system_allowed_paths so
     /_test/config/status + /_test/config/finish stay reachable for the runner."""
@@ -493,6 +512,62 @@ def test_patch_key_factory_preserves_other_kwargs(monkeypatch):
     assert last["kwargs"] == {"database": "viur-tests", "namespace": "ns-1"}
 
 
+def test_patch_key_factory_is_idempotent(monkeypatch):
+    """Re-entering _patch_key_factory (e.g. test re-activation after the
+    transport stub is popped) must not stack wrapper layers — the
+    second wrapper rebuilds on top of the original __init__, not on
+    top of the previous wrapper.
+
+    Stacking would be observationally OK with identical params (the
+    inner setdefault is a no-op), but the wrapper chain would grow
+    unboundedly across test re-entries.
+    """
+    captured: list = []
+    Key = _install_fake_db_types_module(monkeypatch, captured)
+    original_init = Key.__init__
+
+    class _Client:
+        database = "viur-tests"
+        namespace = "alice"
+
+    activation._patch_key_factory(_Client())
+    first_wrapper = Key.__init__
+    assert first_wrapper is not original_init
+
+    # Re-patch with the same client — the wrapper must reference the
+    # ORIGINAL init, not the first wrapper.
+    activation._patch_key_factory(_Client())
+    second_wrapper = Key.__init__
+    assert second_wrapper is not first_wrapper
+    assert getattr(second_wrapper, activation._KEY_FACTORY_ORIG_ATTR) is original_init
+
+    # Behaviour still correct.
+    Key("kind", "id")
+    assert captured[-1]["kwargs"]["database"] == "viur-tests"
+    assert captured[-1]["kwargs"]["namespace"] == "alice"
+
+
+def test_patch_legacy_urlsafe_is_idempotent(monkeypatch):
+    """Same idempotency contract for the to_legacy_urlsafe patch."""
+    Key = _install_fake_gcds_key(monkeypatch)
+    original = Key.to_legacy_urlsafe
+
+    activation._patch_legacy_urlsafe()
+    first = Key.to_legacy_urlsafe
+    assert first is not original
+
+    activation._patch_legacy_urlsafe()
+    second = Key.to_legacy_urlsafe
+    assert second is not first
+    assert getattr(second, activation._LEGACY_URLSAFE_ORIG_ATTR) is original
+
+    # Behaviour still correct.
+    k = Key("user", "abc", database="viur-tests")
+    result = k.to_legacy_urlsafe()
+    assert b"viur-tests" not in result
+    assert k._database == "viur-tests"
+
+
 # ---------------------------------------------------------------------------
 # activate() integration
 # ---------------------------------------------------------------------------
@@ -616,6 +691,30 @@ def test_activate_default_namespace_is_none(monkeypatch, router_validators):
     _stub_open_bootstrap_paths(monkeypatch, [])
 
     activation.activate(database="viur-tests")
+    assert ConfigModule.current_namespace() is None
+
+
+def test_activate_normalises_empty_namespace_to_none(monkeypatch, router_validators):
+    """``activate(namespace="")`` is the same as no namespace — matches
+    setup()'s env-var handling so direct programmatic calls and the
+    ``VIUR_TESTING_NAMESPACE=`` boot path behave identically.
+
+    Regression guard: an earlier version passed ``namespace=""`` straight
+    through, which built a datastore.Client with an empty-string
+    namespace (not the default namespace) — silent data divergence
+    that's painful to debug.
+    """
+    captured: dict = {}
+    client = _FakeClient(database="viur-tests", project="proj-z")
+    _install_fake_datastore_capturing(monkeypatch, client=client, captured=captured)
+    _stub_patch_transport(monkeypatch, [])
+    _stub_patch_key_factory(monkeypatch, [])
+    _stub_patch_legacy_urlsafe(monkeypatch, [])
+    _stub_open_bootstrap_paths(monkeypatch, [])
+
+    activation.activate(database="viur-tests", namespace="")
+
+    assert "namespace" not in captured  # client built without namespace kwarg
     assert ConfigModule.current_namespace() is None
 
 

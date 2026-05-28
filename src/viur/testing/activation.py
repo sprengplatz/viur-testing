@@ -132,6 +132,14 @@ def _patch_transport_client(client: "datastore.Client") -> None:
     transport.__client__ = client
 
 
+_KEY_FACTORY_ORIG_ATTR = "_viur_testing_key_init_orig"
+"""Attribute that stashes the unwrapped ``ViurKey.__init__`` on the
+patched wrapper, so re-entry into :func:`_patch_key_factory` (e.g. in
+tests that pop ``viur.core.db.transport`` and re-activate) replaces the
+previous wrapper with a fresh one built on top of the original rather
+than stacking another layer."""
+
+
 def _patch_key_factory(client: "datastore.Client") -> None:
     """Make ``viur.core.db.types.Key`` carry the client's ``database=`` and ``namespace=``.
 
@@ -150,6 +158,9 @@ def _patch_key_factory(client: "datastore.Client") -> None:
     Explicit kwargs from the caller still win. The patch is
     intentionally only applied when test mode is active — no effect on
     production processes, where :func:`activate` refuses to run anyway.
+
+    Idempotent: a previous patch's wrapper is unwrapped before the new
+    wrapper is built, so repeated calls (test re-entry) never stack.
     """
     target_db = getattr(client, "database", None)
     target_ns = getattr(client, "namespace", None)
@@ -158,7 +169,8 @@ def _patch_key_factory(client: "datastore.Client") -> None:
 
     from viur.core.db.types import Key as ViurKey  # noqa: PLC0415
 
-    _orig_init = ViurKey.__init__
+    current_init = ViurKey.__init__
+    _orig_init = getattr(current_init, _KEY_FACTORY_ORIG_ATTR, current_init)
 
     def _patched_init(self, *path_args, project=None, **kwargs):
         if target_db is not None:
@@ -168,7 +180,13 @@ def _patch_key_factory(client: "datastore.Client") -> None:
         _orig_init(self, *path_args, project=project, **kwargs)
 
     _patched_init.__name__ = _orig_init.__name__
+    setattr(_patched_init, _KEY_FACTORY_ORIG_ATTR, _orig_init)
     ViurKey.__init__ = _patched_init
+
+
+_LEGACY_URLSAFE_ORIG_ATTR = "_viur_testing_legacy_urlsafe_orig"
+"""Same idempotency sentinel as :data:`_KEY_FACTORY_ORIG_ATTR`, but for
+the ``to_legacy_urlsafe`` patch."""
 
 
 def _patch_legacy_urlsafe() -> None:
@@ -198,10 +216,14 @@ def _patch_legacy_urlsafe() -> None:
     :func:`activate` wired up), so the patched ``Key.__init__``
     default fills the database back in when the urlsafe string is
     parsed into a new Key.
+
+    Idempotent: a previous patch's wrapper is unwrapped before the
+    new wrapper is built, so repeated calls never stack.
     """
     from google.cloud.datastore.key import Key as GCDSKey  # noqa: PLC0415
 
-    _orig = GCDSKey.to_legacy_urlsafe
+    current = GCDSKey.to_legacy_urlsafe
+    _orig = getattr(current, _LEGACY_URLSAFE_ORIG_ATTR, current)
 
     def _patched(self, location_prefix=None):
         if self._database is None:
@@ -214,6 +236,7 @@ def _patch_legacy_urlsafe() -> None:
             self._database = saved
 
     _patched.__name__ = _orig.__name__
+    setattr(_patched, _LEGACY_URLSAFE_ORIG_ATTR, _orig)
     GCDSKey.to_legacy_urlsafe = _patched
 
 
@@ -239,8 +262,8 @@ _BOOTSTRAP_OPEN_PATHS: tuple[str, ...] = (
     # :func:`viur.testing.register_test_submodule`). Without them,
     # ``closed_system=True`` would reject the fixture POSTs with 401
     # even when the token header is correct.
-    "json/_test/*",
-
+    "*/_test/*",
+    "_test/*",
 )
 """Paths that must be reachable without a logged-in user.
 
@@ -300,11 +323,21 @@ def activate(*, database: str = DEFAULT_DATABASE, namespace: str | None = None) 
         and write to. When several testers share one ``viur-tests``
         database, giving each their own namespace (e.g. ``ak``, ``mb``,
         ``ci-pr-42``) keeps their entities from colliding without
-        needing to provision separate databases.
+        needing to provision separate databases. An empty string is
+        normalised to ``None`` — same convention as
+        :data:`VIUR_TESTING_NAMESPACE` in :func:`viur.testing.setup`,
+        so direct programmatic activation and env-var-driven boot
+        behave identically.
     :raises RuntimeError: if any of the precondition checks or the probe
         fail. The process must abort rather than continue with a
         half-applied swap.
     """
+    # Normalise empty string → None at the public seam so every downstream
+    # helper (client construction, key factory patch, ConfigModule state)
+    # sees the same canonical form. Mirrors setup()'s env-var handling.
+    if namespace == "":
+        namespace = None
+
     _require_transport_not_loaded()
     _require_dev_server()
 

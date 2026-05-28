@@ -32,9 +32,20 @@ server **and** the runner agree they are talking to the test instance.
    any test if the server's reply (database, project_id, token hash)
    does not match.
 
-The session token is stored only in the test database itself
-(kind `viur-tests`, entity `auth-token`) — never on disk. App Engine
-file-system writes are not needed.
+The session token is the source of truth in the test database itself
+(kind `viur-tests`, entity `auth-token`). The **server side never writes
+the token to disk** — App Engine file-system writes are not needed, no
+state survives a server restart.
+
+The runner side does cache a copy: the Playwright globalSetup persists
+the parsed `/_test/config/status` response under `.auth/token.json`
+(plus a `process.env.E2E_TEST_TOKEN` for spawned subprocesses) so that
+worker processes and per-test fixtures can read the session info
+without re-hitting the bootstrap endpoint. `.auth/` is gitignored by
+the `viur-testing-init` template; `globalTeardown` deletes the file on
+suite end. If you want to drop both the on-disk and env-var copies in
+your own setup, replace `createGlobalSetup`/`createGlobalTeardown`
+with a custom wrapper that uses your preferred mechanism instead.
 
 ## Module layout
 

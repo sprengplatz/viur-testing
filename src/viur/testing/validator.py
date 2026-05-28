@@ -35,17 +35,32 @@ if t.TYPE_CHECKING:
     from viur.core.request import BrowseHandler
 
 
-def _is_bootstrap_path(path: str | None, suffixes: tuple[str, ...]) -> bool:
+def _is_bootstrap_path(path: str | None, actions: frozenset[str]) -> bool:
     """True if ``path`` targets one of the un-tokened bootstrap endpoints.
 
-    Suffix match works regardless of the render prefix viur-core folds in
-    (``/json/_test/config/status``, ``/html/_test/config/status``, plain
-    ``/_test/config/status`` …). The leading slash on the suffix prevents
-    accidental prefix collision (``/foo_test/config/status`` would not match).
+    Accepts exactly one of these shapes:
+
+    - ``/_test/config/<action>`` — three segments, no renderer prefix.
+    - ``/<renderer>/_test/config/<action>`` — four segments, where
+      ``<renderer>`` is a single segment viur-core folds in (typically
+      ``json``, ``vi``, ``html``, but any single segment passes — the
+      TokenValidator is the actual access control on tokenless paths).
+
+    Anything deeper (``/a/b/_test/config/status``) or differently shaped
+    (``/_test/config/status/extra``, ``/_test/configX/status``) is
+    refused. The earlier suffix-match implementation accepted any path
+    ending in ``/_test/config/status``, which weakened the defence-in-
+    depth claim even though viur-core's router would normally not route
+    such paths anyway.
     """
     if not path:
         return False
-    return any(path.endswith(suffix) for suffix in suffixes)
+    parts = path.lstrip("/").split("/")
+    if len(parts) == 3:
+        return parts[0] == "_test" and parts[1] == "config" and parts[2] in actions
+    if len(parts) == 4:
+        return parts[1] == "_test" and parts[2] == "config" and parts[3] in actions
+    return False
 
 
 class ProductionGuardValidator(RequestValidator):
@@ -91,7 +106,7 @@ class TokenValidator(RequestValidator):
 
     @staticmethod
     def validate(request: "BrowseHandler") -> tuple[int, str, str] | None:
-        from .constants import BOOTSTRAP_PATH_SUFFIXES, TOKEN_HEADER  # noqa: PLC0415
+        from .constants import BOOTSTRAP_ACTIONS, TOKEN_HEADER  # noqa: PLC0415
         from ._test.config import ConfigModule  # noqa: PLC0415
 
         if not ConfigModule.is_active():
@@ -100,7 +115,7 @@ class TokenValidator(RequestValidator):
             return 403, "Forbidden", "viur-test: server is not in test mode"
 
         path = getattr(request.request, "path", None)
-        if _is_bootstrap_path(path, BOOTSTRAP_PATH_SUFFIXES):
+        if _is_bootstrap_path(path, BOOTSTRAP_ACTIONS):
             return None
 
         active_token = ConfigModule.current_token()

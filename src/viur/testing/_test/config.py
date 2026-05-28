@@ -144,7 +144,15 @@ class ConfigModule(Module):
 
         Idempotent for matching ``(database, project_id, namespace)``;
         refuses to silently overwrite a mismatching prior activation.
+
+        ``namespace=""`` is normalised to ``None`` — same convention as
+        :func:`viur.testing.activate` and the ``VIUR_TESTING_NAMESPACE``
+        env var. Without this normalisation a direct call with the
+        empty string followed by an :func:`activate`-driven call with
+        ``None`` (or vice-versa) would falsely report a mismatch.
         """
+        if namespace == "":
+            namespace = None
         if cls._database is None:
             cls._database = database
             cls._project_id = project_id

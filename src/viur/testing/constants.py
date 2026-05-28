@@ -30,11 +30,17 @@ TOKEN_PROPERTY = "token"
 DEFAULT_DATABASE = "viur-tests"
 """Name of the named Datastore database that holds the test data."""
 
-BOOTSTRAP_PATH_SUFFIXES: tuple[str, ...] = ("/_test/config/status", "/_test/config/finish")
-"""Request paths that the validator lets through without a token.
+BOOTSTRAP_ACTIONS: frozenset[str] = frozenset({"status", "finish"})
+"""Trailing path segments that may be reached without a session token.
 
 The status endpoint is what *issues* the token in the first place, so it
 must be reachable without one. The finish endpoint must stay reachable
 even after the token has been wiped, so the session can be cleanly torn
 down. Both endpoints re-verify dev-server + database themselves.
+
+The validator (:func:`viur.testing.validator._is_bootstrap_path`) accepts
+exactly ``/<renderer>?/_test/config/<action>`` paths where ``<action>``
+is one of these values and ``<renderer>`` is a single optional segment
+(``json``, ``vi``, ``html``, ...). Anything deeper or differently shaped
+is treated as a regular request and requires the token.
 """

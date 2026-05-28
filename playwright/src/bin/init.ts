@@ -10,9 +10,43 @@
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { dirname, isAbsolute, join, resolve } from "node:path"
+import { fileURLToPath } from "node:url"
 
 /** Default subdirectory beneath `cwd` where the e2e suite gets scaffolded. */
 const DEFAULT_RELATIVE_TARGET = "testing/e2e"
+
+/**
+ * SemVer caret range for the published ``@spltz/viur-testing`` package,
+ * read from this package's own ``package.json`` at runtime. Injected
+ * into the generated host ``package.json`` in place of the
+ * ``VIUR_TESTING_VERSION_RANGE`` placeholder.
+ *
+ * Why not hard-coded? A static string would silently rot whenever the
+ * package is bumped — scaffolded projects would carry a stale floor.
+ * Why ``^``? Caret pins to compatible-with-this-major; once the
+ * package goes 1.0 the host gets minor/patch updates automatically
+ * but never a breaking major. Pre-1.0, ``^`` is conservative (locks
+ * to the same ``0.x`` minor); that is intentional because we are
+ * still iterating on the wire format.
+ */
+function detectOwnVersionRange(): string {
+  // dist/bin/init.js → ../../package.json. In source (.ts) we are at
+  // src/bin/init.ts → ../../package.json. ``fileURLToPath`` works in
+  // both compiled and ts-node-style executions.
+  const here = dirname(fileURLToPath(import.meta.url))
+  const pkgPath = join(here, "..", "..", "package.json")
+  try {
+    const pkg = JSON.parse(readFileSync(pkgPath, "utf8")) as { version?: string }
+    if (pkg.version && /^\d+\.\d+\.\d+/.test(pkg.version)) {
+      return `^${pkg.version}`
+    }
+  } catch {
+    // Unreadable / corrupted manifest — fall through to the safe default.
+  }
+  // Defensive fallback: pin to the current published floor so the
+  // scaffold is never left with a wildcard.
+  return "^0.1.0"
+}
 
 const TEMPLATES: Record<string, string> = {
   "package.json": `{
@@ -27,12 +61,12 @@ const TEMPLATES: Record<string, string> = {
     "test:ui": "playwright test --ui",
     "codegen": "playwright codegen http://localhost:8081/",
     "report": "playwright show-report",
-    "install-browsers": "playwright install --with-deps chromium",
-    "dev:frontend": "cd ../../sources/app && vite --mode e2e --config ../../testing/e2e/vite.e2e.config.ts --port 8081"
+    "install-browsers": "playwright install --with-deps chromium"
   },
+  "//dev:frontend": "If your project has a Vite frontend, add a script that boots it on :8081 using vite.e2e.config.ts — see the TODO in vite.e2e.config.ts.",
   "devDependencies": {
     "@playwright/test": "^1.49.0",
-    "@spltz/viur-testing": "*",
+    "@spltz/viur-testing": "VIUR_TESTING_VERSION_RANGE",
     "@types/node": "^22.10.0",
     "typescript": "^5.6.0"
   }
@@ -105,40 +139,42 @@ export default defineConfig({
 `,
 
   "vite.e2e.config.ts": `/**
- * Vite config for the e2e test setup. Overlays the project's
- * canonical app vite.config with e2e-specific bits:
+ * Vite config for the e2e test setup. Stands alone — works out of the
+ * box for a backend-only proxy. If your project also has a Vite
+ * frontend whose own vite.config you want to layer on top, follow the
+ * "OVERLAY" TODO at the bottom of this file.
+ *
+ * What this config does:
  *
  *   - envDir set to this directory so .env.e2e applies
- *   - viurTestingTokenFetch plugin: caches the test session token
+ *   - viurTestingTokenFetch plugin: caches the test session token at
+ *     server start, refreshes on observed 403s and on TTL expiry
  *   - withTokenInjection proxy entries: stamp X-Viur-Test-Token on
  *     every forwarded request, so the dev server is a transparent
- *     test-mode adapter
- *
- * TODO when running \`viur-testing-init\`:
- *   1. Adjust the relative path in \`import appConfig\` to point at
- *      your project's actual vite.config.
- *   2. Adjust the proxy paths / BACKEND constant if needed.
+ *     test-mode adapter for the backend
  */
 
-import { defineConfig, mergeConfig, type UserConfig } from "vite"
+import { defineConfig, type UserConfig } from "vite"
 import { dirname } from "node:path"
 import { fileURLToPath } from "node:url"
 
 import { viurTestingTokenFetch, withTokenInjection } from "@spltz/viur-testing"
 
-// TODO: point this at your app's vite.config
-import appConfig from "../../sources/app/vite.config"
-
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
+// TODO: adjust if your backend listens on a different port.
 const BACKEND = "http://localhost:8080"
 
-const overrides: UserConfig = {
+const e2eConfig: UserConfig = {
   envDir: __dirname,
   plugins: [viurTestingTokenFetch({ backendUrl: BACKEND })],
   server: {
     port: 8081,
     proxy: {
+      // TODO: keep the routes that match your backend's actual mount
+      // points. Anything you remove will not get the test-token
+      // header injected and will 403 from viur-testing's
+      // TokenValidator.
       "/vi/": withTokenInjection(BACKEND),
       "/json": withTokenInjection(BACKEND),
       "/static": { target: BACKEND, changeOrigin: false },
@@ -147,7 +183,20 @@ const overrides: UserConfig = {
   },
 }
 
-export default mergeConfig(appConfig, defineConfig(overrides))
+// OVERLAY (optional): if your frontend has its own vite.config that
+// you want to layer the e2e overrides on top of, uncomment the two
+// lines below and replace the export with the mergeConfig form:
+//
+//   import { mergeConfig } from "vite"
+//   import appConfig from "../path/to/your/app/vite.config"
+//   export default mergeConfig(appConfig, defineConfig(e2eConfig))
+//
+// Add a "dev:frontend" script in package.json that boots the
+// frontend with this overlay, e.g.:
+//
+//   "dev:frontend": "vite --config vite.e2e.config.ts --port 8081"
+
+export default defineConfig(e2eConfig)
 `,
 
   ".env.e2e": `# Vite env loaded when vite is started with \`--mode e2e --config vite.e2e.config.ts\`.
@@ -202,11 +251,13 @@ export function initProject(opts: InitOptions = {}): void {
   const cwd = opts.cwd ?? process.cwd()
   const targetDir = resolveTargetDir(cwd, opts.target)
   const projectName = opts.projectName ?? deriveProjectName(targetDir)
+  const viurTestingVersionRange = detectOwnVersionRange()
 
   console.log(`[viur-testing-init] scaffolding into ${targetDir}`)
   if (projectName !== "PROJECT") {
     console.log(`[viur-testing-init] project name: ${projectName}`)
   }
+  console.log(`[viur-testing-init] @spltz/viur-testing pinned to ${viurTestingVersionRange}`)
 
   let written = 0
   let skipped = 0
@@ -219,7 +270,9 @@ export function initProject(opts: InitOptions = {}): void {
       continue
     }
     mkdirSync(dirname(fullPath), { recursive: true })
-    const content = rawContent.replaceAll("PROJECT", projectName)
+    const content = rawContent
+      .replaceAll("PROJECT", projectName)
+      .replaceAll("VIUR_TESTING_VERSION_RANGE", viurTestingVersionRange)
     writeFileSync(fullPath, content, "utf8")
     console.log(`  wrote  ${relPath}`)
     written += 1

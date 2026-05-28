@@ -281,6 +281,56 @@ def test_wrapped_setup_falls_back_to_default_label_for_empty_namespace(
     assert banner._DEFAULT_NAMESPACE_LABEL in recorded[5]
 
 
+def test_measure_visible_width_strips_ansi_escapes():
+    """Visible width is the character count after every ANSI SGR escape
+    is removed. Used by the wrapper to discover viur-core's actual
+    banner width at runtime."""
+    plain = "X" * 80
+    coloured = f"\033[0m{plain[:40]}\033[1;33m{plain[40:60]}\033[0m{plain[60:]}"
+    assert banner._measure_visible_width(coloured) == 80
+    assert banner._measure_visible_width(plain) == 80
+    assert banner._measure_visible_width("") == 0
+
+
+def test_wrapped_setup_adapts_to_non_default_banner_width(viur_core_with_setup, monkeypatch):
+    """If a future viur-core uses a different ``WIDTH``, the wrapper
+    must follow — the injected ``database``/``namespace`` lines have
+    to line up with the actual banner frame, not the constant from
+    the time of writing.
+
+    Regression guard: an earlier version hard-coded
+    :data:`_BANNER_WIDTH` everywhere, so a 100-wide banner would have
+    produced 80-wide injected lines (visually misaligned, framing
+    broken)."""
+    viur_core, recorded, capture, _ = viur_core_with_setup
+
+    wide = 100
+    fill = banner._BANNER_FILL
+
+    def _wide_setup():
+        # Real viur-core lays out title (one fill char trailing the
+        # text), content lines, and a trailer that is pure fill.
+        print(f"\033[0m{fill * 28} LOCAL DEVELOPMENT SERVER IS UP AND RUNNING {fill * 28}")
+        print(f"\033[0m{fill}{'project = \033[1;31mproj\033[0m':^{(wide - 2) + 11}}{fill}")
+        print(f"\033[0m{fill * wide}")
+
+    viur_core.setup = _wide_setup
+    banner.install_banner_patch("viur-tests")
+
+    monkeypatch.setattr(builtins, "print", capture)
+    viur_core.setup()
+
+    # Title (1) + content (1) + database (injected) + namespace (injected)
+    # + trailer (1) = 5 lines total.
+    assert len(recorded) == 5
+    # Injected database/namespace lines must be exactly ``wide`` columns
+    # wide after ANSI strip.
+    assert banner._measure_visible_width(recorded[2]) == wide
+    assert banner._measure_visible_width(recorded[3]) == wide
+    assert "viur-tests" in recorded[2]
+    assert banner._DEFAULT_NAMESPACE_LABEL in recorded[3]
+
+
 def test_wrapped_setup_injection_only_fires_once(viur_core_with_setup, monkeypatch):
     """If setup prints more banner-like trailers later, only the first one
     after the title gets a DB line — the sniffer flips back off after

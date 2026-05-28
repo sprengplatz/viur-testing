@@ -7,8 +7,96 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
-No release yet — every entry below is a feature added during the
-initial design.
+## [0.2.0] — 2026-05-28
+
+Post-design audit: tightens the bilateral guarantee, mostly on the
+runner-side TypeScript half, and normalises namespace handling
+end-to-end. No public API breaks; `tokenFile` is the only removal.
+
+### Added
+
+- TS runner: `expectedProjectId` option + `E2E_TEST_PROJECT_ID`
+  env var, mirroring Python's `expected_project_id`.
+- TS runner: SHA-256 `token_hash` verification and runtime
+  `is_dev_server` check in `requireTestMode` — closes parity gap
+  with Python's `require_test_mode`.
+- TS Vite plugin: cached token auto-refreshes on observed HTTP
+  403 and after a configurable TTL (default 1 h). New option
+  `refreshIntervalMs` (0 disables TTL refresh; 403 path always on).
+- TS fixtures: worker-scoped `_viurTestingStatus` reads
+  `.auth/token.json` once per worker; `serverStatus`/`context`/
+  `backendApi` consume it (was 3× per test).
+
+### Changed
+
+- Python: namespace `""` → `None` normalisation now applied in
+  `activate()`, `ConfigModule.set_active()`, and
+  `require_test_mode()` — was previously only in `setup()`.
+- Python: `closed_system_allowed_paths` uses renderer-agnostic
+  wildcards `*/_test/*` + `_test/*` (was `json/_test/*` only).
+- Python: `TokenValidator` bootstrap-path check is now an exact
+  segment-shape match (`/<renderer>?/_test/config/<action>`)
+  instead of a permissive `path.endswith()`.
+- Python: `register_test_submodule` enforces
+  `^[a-z][a-z0-9_-]*$` and rejects names shadowing existing
+  `TestModule`/`Module` attributes (e.g. `json`, `handler`).
+- Python: banner injection detects viur-core's banner width at
+  runtime (falls back to 80 if detection misses).
+- Python: `_load_project_api` walks past every `viur.testing`
+  frame instead of hard-coding `inspect.stack()[2]`.
+- TS: `expectedNamespace=""` is normalised to `null`, matching
+  the server-side `VIUR_TESTING_NAMESPACE=` convention.
+- TS: `assertNoDirectPlaywrightImports` skips `node_modules`,
+  `.git`, `dist`, `build`, `coverage`, `playwright-report`,
+  `test-results`, `.next`; strips line + block comments before
+  scanning; clear error when `testsDir` does not exist.
+- TS: `finishTestMode` sends `X-Viur-Test-Token` (symmetry with
+  Python's `finish()`).
+- TS: `callTestModuleRaw` cookies carry the full Playwright
+  `Cookie` shape (`sameSite`, `secure`, `httpOnly`, `expires`
+  added), derived from `APIRequestContext.storageState()`.
+- TS: `viur-testing-init` pins generated `package.json` to
+  `^<own-version>` instead of `"*"`.
+- TS: `viur-testing-init` `vite.e2e.config.ts` template is now
+  stand-alone; the Sprengplatz-specific `appConfig` overlay
+  moved into a commented `OVERLAY` block at the bottom. The
+  `dev:frontend` script is dropped from the default scripts.
+
+### Removed
+
+- TS: `tokenFile` option on `createGlobalSetup` /
+  `createGlobalTeardown`. The path was a footgun — changing it
+  silently broke the fixtures that hard-coded
+  `.auth/token.json`. A single internal `tokenFilePath()` helper
+  is now the source of truth across globalSetup, globalTeardown,
+  fixtures, and test-module helpers.
+
+### Fixed
+
+- Python: `_patch_key_factory` + `_patch_legacy_urlsafe` are now
+  idempotent — repeated `activate()` no longer stacks wrapper
+  layers (relevant for test re-entry).
+
+### Documentation
+
+- README clarifies token persistence: server side never writes
+  to disk; runner side caches under `.auth/token.json` +
+  `process.env.E2E_TEST_TOKEN`.
+- Playwright README documents Vite token refresh and the
+  `E2E_TEST_PROJECT_ID` env var; init-template description
+  updated for the stand-alone Vite config.
+
+### Quality
+
+- 212 pytest cases (was 187), 100% branch coverage held.
+- TS smoke-test harness covers the preflight branches, the
+  forbidden-imports walker, the Vite refresh paths, and the
+  init scaffolder's version pin.
+
+## [0.1.0] — initial design
+
+The initial design pre-dates the audit round. Entries below
+document the design as shipped before 0.2.0.
 
 ### Distribution
 
@@ -229,4 +317,6 @@ in:
    module instance is silently skipped. The host-side wiring
    registers `TestModule` as a *class*, not as an instance.
 
-[Unreleased]: https://github.com/sprengplatz/viur-testing/commits/main
+[Unreleased]: https://github.com/sprengplatz/viur-testing/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/sprengplatz/viur-testing/releases/tag/v0.2.0
+[0.1.0]: https://github.com/sprengplatz/viur-testing/releases/tag/v0.1.0
