@@ -60,10 +60,15 @@ export interface RequireTestModeOptions {
  * need to branch on:
  *
  * - ``armed``: HTTP 200 + a fully validated test-mode payload.
- * - ``unarmed``: HTTP 404 — the server is running but does NOT have
- *   the ``/_test/config/status`` endpoint mounted. In auto-detect
- *   that means we enter Guarded Mode; in the explicit
- *   ``requireTestMode`` that means we throw "not in test mode".
+ * - ``unarmed``: any 4xx response — the server is running but does
+ *   NOT serve the ``/_test/config/status`` endpoint as a test-mode
+ *   payload. Covers 404 (endpoint not mounted, e.g. Flask/FastAPI
+ *   defaults) as well as 401/403 (ViUR's JSON-renderer guards
+ *   unknown modules with a permission check that fires before route
+ *   resolution, so unmounted endpoints surface as 401 rather than
+ *   404). In auto-detect that means we enter Guarded Mode; in the
+ *   explicit ``requireTestMode`` that means we throw "not in test
+ *   mode".
  * - Anything else (5xx, timeout, 200-but-malformed-JSON,
  *   200-but-failing-validation) is **never** returned — those
  *   conditions throw straight out of the helper, because silently
@@ -91,13 +96,20 @@ export async function probeStatusEndpoint(
   const ctx = await playwrightRequest.newContext({ baseURL: opts.backendUrl })
   try {
     const resp = await ctx.post("/json/_test/config/status")
-    if (resp.status() === 404) {
+    const httpStatus = resp.status()
+    // Treat any 4xx as "endpoint not serving a test-mode payload".
+    // ViUR's JSON renderer permission-checks before route resolution
+    // and answers unknown modules with 401, not 404 — folding the
+    // whole 4xx range into ``unarmed`` keeps Guarded-Mode detection
+    // working across backends without weakening the 5xx hard-error
+    // policy.
+    if (httpStatus >= 400 && httpStatus < 500) {
       return { kind: "unarmed" }
     }
     if (!resp.ok()) {
       throw new Error(
         `viur-testing preflight failed: POST /json/_test/config/status returned ` +
-          `${resp.status()} ${resp.statusText()}. Ambiguous server state — ` +
+          `${httpStatus} ${resp.statusText()}. Ambiguous server state — ` +
           `refusing to choose between test mode and guarded mode automatically.`,
       )
     }
@@ -181,7 +193,7 @@ export async function probeStatusEndpoint(
  * and the Python-side runners enforce the same contract.
  *
  * Unlike the auto-detect path used by ``createGlobalSetup``, this
- * function treats a 404 on ``/_test/config/status`` as a failure —
+ * function treats any 4xx on ``/_test/config/status`` as a failure —
  * use it when you specifically want "test mode armed, or no test
  * run at all".
  */
@@ -190,7 +202,7 @@ export async function requireTestMode(opts: RequireTestModeOptions): Promise<Ser
   if (probe.kind === "unarmed") {
     throw new Error(
       `viur-testing preflight failed: POST /json/_test/config/status returned ` +
-        `404 — the backend at ${opts.backendUrl} is not in test mode. ` +
+        `a 4xx — the backend at ${opts.backendUrl} is not in test mode. ` +
         `Is the backend running with VIUR_TESTING_ENABLE=1 and is viur-testing ` +
         `wired into main.py?`,
     )

@@ -9,9 +9,13 @@
  *    status }``. The status carries the session token and is the
  *    same shape that ``requireTestMode`` would have returned, so
  *    downstream code paths are unchanged.
- * 3. **HTTP 404** → run the PIN challenge; on success return
+ * 3. **Any 4xx** → run the PIN challenge; on success return
  *    ``{ mode: "guarded" }``; on failure the challenge throws and
- *    the suite never starts.
+ *    the suite never starts. The whole 4xx range counts because
+ *    ViUR's JSON renderer answers unknown modules with 401 rather
+ *    than 404 (permission-check runs before route resolution), so
+ *    treating only 404 as ``unarmed`` would never trip Guarded Mode
+ *    on a ViUR backend.
  * 4. **Anything else** (5xx, timeout, 200-but-malformed,
  *    integrity-check failure, …) → throw straight from
  *    :func:`probeStatusEndpoint`. Auto-detect never silently falls

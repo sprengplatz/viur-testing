@@ -113,7 +113,7 @@ export async function runPinChallenge(opts: RunPinChallengeOptions): Promise<voi
   io.writeLine("⚠  GUARDED MODE")
   io.writeLine(`   Target backend:  ${opts.backendUrl}`)
   io.writeLine("   The backend is NOT in test mode. Tests will interact with")
-  io.writeLine("   the live application — no test database, no token guard,")
+  io.writeLine("   the default Database — no test database, no token guard,")
   io.writeLine("   no _test/ fixture endpoints. Specs that use _test")
   io.writeLine("   infrastructure are auto-skipped.")
   io.writeLine("")

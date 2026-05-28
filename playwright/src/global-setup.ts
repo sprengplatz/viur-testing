@@ -7,12 +7,14 @@
  *     test-mode payload → **Test Mode**: write the session payload
  *     to ``.auth/token.json``, set ``VIUR_TESTING_MODE=test``,
  *     workers pick up the token via the fixtures.
- *   - returns 404 → **Guarded Mode**: run an interactive 6-digit
+ *   - returns any 4xx → **Guarded Mode**: run an interactive 6-digit
  *     PIN challenge on the terminal. On success, set
  *     ``VIUR_TESTING_MODE=guarded`` and proceed without a token —
  *     specs that use `_test` infrastructure auto-skip; everything
  *     else runs against the live backend exactly as a browser
- *     would.
+ *     would. (Folding the whole 4xx range — not just 404 — is
+ *     required because ViUR's JSON renderer surfaces unknown
+ *     modules as 401.)
  *   - anything else (5xx, timeout, malformed JSON, integrity
  *     failure) → hard error, no fallback. Ambiguous server state
  *     is never silently downgraded to Guarded Mode.
