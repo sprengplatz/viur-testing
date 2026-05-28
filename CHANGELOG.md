@@ -7,6 +7,101 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+## [0.3.0] — 2026-05-28
+
+`@spltz/viur-testing` only — the Python package stays at 0.2.0.
+Introduces **Guarded Mode**: automatic detection of whether the
+target backend is in test mode, with an interactive PIN gate for
+the live-backend case. Lets Playwright drive read-only smoke tests
+against a deployed application without spinning up a dedicated
+test backend, while keeping the bilateral guarantee for everything
+that does have one.
+
+### Added
+
+- **Auto mode detection** in `createGlobalSetup()` —
+  `POST /json/_test/config/status` decides the run mode:
+  - 200 + valid payload → **Test Mode** (unchanged flow).
+  - 404 → **Guarded Mode** + interactive PIN challenge.
+  - 5xx / timeout / malformed / integrity-fail → hard error,
+    never a silent downgrade.
+- **6-digit PIN challenge** (`runPinChallenge`): fresh code per
+  run, displayed yellow + space-separated above the backend URL.
+  Wrong PIN → abort. No TTY → "Run from an interactive terminal."
+  No persisted ACK file, no env-var bypass — every run is its own
+  human-in-the-loop decision.
+- **Mode propagation via `VIUR_TESTING_MODE` env var**
+  (exported as `MODE_ENV_VAR`). Workers inherit and the fixtures
+  branch on it.
+- New public exports: `detectMode`, `probeStatusEndpoint`,
+  `runPinChallenge` + their option types, for hosts that want to
+  build custom setup flows on top.
+- `createGlobalSetup({ backendUrl })` — explicit option in
+  addition to the existing `E2E_BACKEND_URL` env var (option
+  wins when both are set).
+- **`viur-testing-init` scaffolder picks the mode interactively.**
+  On a TTY the CLI asks `[1] Test Mode / [2] Guarded Mode`,
+  defaulting to Test. Non-TTY runs (CI scaffolding) default to
+  Test silently. Skip the prompt with `--mode test|guarded` or
+  the `--guarded` shortcut. The Guarded preset drops Vite,
+  `.env.e2e`, and the `serverStatus`-using example spec; the
+  generated `playwright.config.ts` points `baseURL` at the
+  deployed backend instead of a local Vite dev server.
+
+### Changed
+
+- **`context` fixture is mode-aware.** In Test Mode it injects the
+  `X-Viur-Test-Token` header as before; in Guarded Mode it
+  returns a vanilla browser context (no headers, no overrides) so
+  Playwright behaves like a real browser against the live
+  application.
+- **`serverStatus`, `backendApi` fixtures auto-skip in Guarded
+  Mode** via `testInfo.skip(true, "uses _test infrastructure, ...")`.
+  The consuming test counts as **skipped**, not **failed** —
+  the spec stays valid in both modes without conditional code.
+- **`callTestModule` / `callTestModuleRaw` auto-skip in Guarded
+  Mode** via `test.skip(...)`. Called from `test.beforeAll` skips
+  all tests in the describe; called from a test body skips that
+  test only.
+- **`global-teardown` is a no-op in Guarded Mode** — no session
+  token was issued, nothing to release.
+
+### Documentation
+
+- Top-level README has a new "Guarded Mode" section pointing at
+  the Playwright README for details.
+- Playwright README has a full auto-detect table and the
+  Guarded-Mode contract (TTY-required, no persisted ACK, what
+  auto-skips).
+- **mkdocs site has a dedicated `Guarded Mode` page**
+  (`docs/guarded-mode.md`) with the auto-detect table, PIN
+  display/input rules, fixture auto-skip semantics and the
+  `--guarded` scaffold flag.
+- **Getting Started + top-level README runner section rewritten
+  around the npm package.** The pytest `conftest.py` example is
+  gone — the canonical e2e wiring is now
+  `npx viur-testing-init` → `npm test`. The Python primitives
+  (`require_test_mode`, `finish`, `ServerStatus`) remain
+  documented in the API reference for hosts that drive their own
+  Python-side runner.
+
+### Internal
+
+- `test-mode.ts`: `requireTestMode` is now a thin wrapper over a
+  shared `probeStatusEndpoint` helper that returns
+  `{ kind: "armed", status } | { kind: "unarmed" }`. Both the
+  explicit "require" path and the auto-detect path use it.
+- New files: `pin-challenge.ts` (interactive 6-digit gate with
+  injectable IO surface for tests) and `mode-detect.ts`
+  (`detectMode` orchestrator).
+
+### Quality
+
+- TypeScript smoke harness covers the three probe outcomes
+  (armed/unarmed/ambiguous), the PIN challenge (success / wrong
+  PIN / no-TTY), the mode-detect dispatcher, and the
+  `globalSetup` env-var plumbing. All 17 checks green.
+
 ## [0.2.0] — 2026-05-28
 
 Post-design audit: tightens the bilateral guarantee, mostly on the
@@ -317,6 +412,7 @@ in:
    module instance is silently skipped. The host-side wiring
    registers `TestModule` as a *class*, not as an instance.
 
-[Unreleased]: https://github.com/sprengplatz/viur-testing/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/sprengplatz/viur-testing/compare/v0.3.0-npm...HEAD
+[0.3.0]: https://github.com/sprengplatz/viur-testing/releases/tag/v0.3.0-npm
 [0.2.0]: https://github.com/sprengplatz/viur-testing/releases/tag/v0.2.0
 [0.1.0]: https://github.com/sprengplatz/viur-testing/releases/tag/v0.1.0

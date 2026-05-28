@@ -10,6 +10,13 @@ end-to-end tests.
 let any request reach a module unless the caller can prove they meant
 to talk to the test instance.
 
+For the Playwright companion package
+([`@spltz/viur-testing`](https://www.npmjs.com/package/@spltz/viur-testing)),
+the same runner can also operate against a deployed instance that is
+**not** in test mode — see [Guarded Mode](guarded-mode.md). In that
+case a fresh 6-digit PIN gate stands in for the bilateral guarantee,
+and specs that depend on `/_test/` infrastructure auto-skip.
+
 ## Six lines of defence
 
 1. **`activate()` refuses outside `conf.instance.is_dev_server`**.
@@ -91,4 +98,7 @@ finally:
   viur-core modules behind the endpoints.
 - [Validators](api/validator.md) — `TokenValidator` and
   `ProductionGuardValidator`.
+- [Guarded Mode](guarded-mode.md) — Playwright-side auto-detect for
+  non-test-mode targets (smoke tests on public pages, deployed
+  instances).
 - [Changelog](changelog.md).

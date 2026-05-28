@@ -97,42 +97,76 @@ On first boot you should see in the log:
 …all in the **`viur-tests`** database. Your live database stays
 untouched.
 
-## 6. Hook up the runner
+## 6. Scaffold the Playwright suite
 
-```python
-# tests/conftest.py
-import pytest
-from viur.testing import require_test_mode, finish
+The companion npm package [`@spltz/viur-testing`](https://www.npmjs.com/package/@spltz/viur-testing)
+ships a one-shot scaffolder. Run it from the repo root — the suite
+lands under `testing/e2e/` by default:
 
-_BASE_URL = "http://localhost:8080"
-
-
-@pytest.fixture(scope="session")
-def test_session():
-    status = require_test_mode(_BASE_URL)
-    yield status
-    finish(_BASE_URL, status.token)
+```sh
+npx viur-testing-init
 ```
 
-[`require_test_mode`](api/runner.md) is the runner-side preflight: it
-calls `POST /_test/config/status`, verifies the server's reply
-(`test_mode`, `is_dev_server`, `database`, `project_id`, and the
-SHA-256 token hash matches the returned token) and returns a
-[`ServerStatus`](api/runner.md) carrying the session token. On any
-mismatch it raises
-[`TestModePreflightError`](api/runner.md) — no test ever runs.
+The scaffolder asks interactively whether you want a **Test Mode**
+or **Guarded Mode** scaffold. Pick `1` for the typical viur-testing
+flow (this guide). The generated `package.json`, `tsconfig.json`,
+`playwright.config.ts`, `vite.e2e.config.ts`, `.env.e2e`,
+`.gitignore` and an example spec are written next to each other —
+re-runs skip files that already exist.
 
-For Playwright, inject the token on every browser request:
+To skip the prompt (CI scaffolding, scripted setup):
 
-```python
-@pytest.fixture
-def context(browser, test_session):
-    return browser.new_context(
-        extra_http_headers={"X-Viur-Test-Token": test_session.token},
-    )
+```sh
+npx viur-testing-init --mode test
+# or, for a non-test-mode deployed instance:
+npx viur-testing-init --guarded
 ```
 
-## 7. Production deployment
+See [Guarded Mode](guarded-mode.md) for what the guarded scaffold
+looks like and when to pick it.
+
+## 7. Install and boot the suite
+
+In the scaffolded directory:
+
+```sh
+cd testing/e2e
+npm install
+npx playwright install --with-deps chromium
+```
+
+The generated `playwright.config.ts` calls
+`createGlobalSetup()` (from `@spltz/viur-testing`) which:
+
+- probes `POST /json/_test/config/status` against `E2E_BACKEND_URL`,
+- on **HTTP 200** validates the bilateral handshake (`test_mode`,
+  `is_dev_server`, `database`, `project_id`, SHA-256 `token_hash`
+  matches the returned token) and writes the session token to
+  `.auth/token.json` for the worker fixtures to pick up,
+- on **HTTP 404** falls into Guarded Mode (interactive PIN gate),
+- on anything else (5xx, malformed JSON, integrity failure)
+  aborts the run — no silent downgrades.
+
+Run the suite against your local test-mode-armed backend:
+
+```sh
+npm test
+```
+
+The worker fixtures (`serverStatus`, `backendApi`, `context`)
+inject `X-Viur-Test-Token` on every browser and APIRequestContext
+call, and the per-spec helpers `callTestModule("<spec>", "<action>")`
+hit `/json/_test/<spec>/<action>` for project-supplied fixture
+endpoints (see `viur.testing.register_test_submodule(...)` on the
+server side).
+
+The Python primitives — [`require_test_mode`](api/runner.md),
+[`finish`](api/runner.md), [`ServerStatus`](api/runner.md),
+[`TestModePreflightError`](api/runner.md) — are still available
+for callers that need them (e.g. a Python-side smoke runner), but
+the canonical e2e wiring goes through the npm package.
+
+## 8. Production deployment
 
 Leave both wiring calls in place. In a cloud deployment:
 

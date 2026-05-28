@@ -5,7 +5,7 @@
  * under /json/_test/<specName>/ via `viur.testing.register_test_submodule`.
  * Each module exposes `setup` and `teardown` POST endpoints.
  *
- *   import { callTestModule } from "@spltz/viur-testing"
+ *   import { test, callTestModule } from "@spltz/viur-testing"
  *
  *   test.beforeAll(async () => {
  *     const { credentials } = await callTestModule("userLogin", "setup")
@@ -13,18 +13,35 @@
  *   })
  *   test.afterAll(() => callTestModule("userLogin", "teardown"))
  *
- * `callTestModule` builds a fresh APIRequestContext with the session
- * token header attached, so the call passes viur-testing's
- * TokenValidator. It reads the token from `.auth/token.json` which
- * `globalSetup` wrote.
+ * In **Test Mode** `callTestModule` builds a fresh APIRequestContext
+ * with the session token header attached, so the call passes
+ * viur-testing's TokenValidator. It reads the token from
+ * `.auth/token.json` which `globalSetup` wrote.
+ *
+ * In **Guarded Mode** the backend has no ``/_test/`` endpoints, so a
+ * call would 404. Instead of failing the test, ``callTestModule``
+ * detects guarded mode via the ``VIUR_TESTING_MODE`` env var and
+ * calls ``test.skip(...)`` — the consuming test (or its
+ * ``beforeAll`` hook) is marked **skipped**, not **failed**, with a
+ * clear reason. Specs that don't touch test modules run normally.
  */
 
 import { readFileSync } from "node:fs"
 
-import type { APIRequestContext } from "@playwright/test"
+// Importing `test` directly from @playwright/test is the only place
+// in this package where that is necessary — it lets ``callTestModule``
+// trigger a runtime skip from inside a regular test/hook callback.
+// User specs MUST go through ``@spltz/viur-testing``'s re-export
+// instead, which the ``assertNoDirectPlaywrightImports`` guard
+// enforces.
+// eslint-disable-next-line no-restricted-imports
+import { test, type APIRequestContext } from "@playwright/test"
 
+import { MODE_ENV_VAR } from "./global-setup.js"
 import { authenticatedApi, type ServerStatus } from "./test-mode.js"
 import { tokenFilePath } from "./token-storage.js"
+
+const SKIP_REASON_GUARDED = "uses _test infrastructure, skipped in guarded mode"
 
 /**
  * Cookie payload shape extracted from ``APIRequestContext.storageState()``.
@@ -88,6 +105,18 @@ export async function callTestModuleRaw<T = unknown>(
   spec: string,
   action: string,
 ): Promise<TestModuleResult<T>> {
+  if (process.env[MODE_ENV_VAR] === "guarded") {
+    // ``test.skip()`` from inside a hook or test body throws an
+    // internal "skipped" control signal. Playwright catches it,
+    // marks the consuming test (or all tests in the describe, if
+    // called from a ``beforeAll``) as skipped, and continues.
+    test.skip(true, SKIP_REASON_GUARDED)
+    // Unreachable — test.skip throws — but the return type wants
+    // a value, so satisfy it. (The TS narrowing of test.skip is
+    // ``never``, but ``test.skip(condition, reason)`` returns
+    // ``void`` in the typing.)
+    throw new Error(SKIP_REASON_GUARDED)
+  }
   const status = loadStatus()
   const backendUrl = process.env.E2E_BACKEND_URL ?? "http://localhost:8080"
   const api = await authenticatedApi({ backendUrl, token: status.token })

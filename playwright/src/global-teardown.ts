@@ -1,9 +1,15 @@
 /**
  * Factory for the Playwright `globalTeardown` hook.
  *
- * Calls `/json/_test/config/finish` to release the session token in
- * the test database, then removes `.auth/token.json` so a later run
- * cannot accidentally re-use a now-invalid token.
+ * In **Test Mode**: calls `/json/_test/config/finish` to release the
+ * session token in the test database, then removes `.auth/token.json`
+ * so a later run cannot accidentally re-use a now-invalid token.
+ *
+ * In **Guarded Mode**: no-op. There was no session token issued, no
+ * file written, nothing to clean up. Detected via the
+ * ``VIUR_TESTING_MODE`` env var that ``globalSetup`` sets — and via
+ * the simple "token file does not exist" fallback in case the env
+ * var was lost.
  *
  *     import { createGlobalTeardown } from "@spltz/viur-testing"
  *
@@ -15,6 +21,7 @@
 
 import { existsSync, readFileSync, unlinkSync } from "node:fs"
 
+import { MODE_ENV_VAR } from "./global-setup.js"
 import { finishTestMode, type ServerStatus } from "./test-mode.js"
 import { tokenFilePath } from "./token-storage.js"
 
@@ -27,6 +34,12 @@ export interface GlobalTeardownOptions {
 
 export function createGlobalTeardown(_opts: GlobalTeardownOptions = {}): () => Promise<void> {
   return async function globalTeardown(): Promise<void> {
+    if (process.env[MODE_ENV_VAR] === "guarded") {
+      // No token, no file, nothing to release. The env var check is
+      // primary; the existsSync check below is just belt-and-braces.
+      return
+    }
+
     const tokenFile = tokenFilePath()
     if (!existsSync(tokenFile)) {
       return

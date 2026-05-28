@@ -199,37 +199,64 @@ to fail fast when somebody points at the wrong slice::
 namespace, use the Datastore default". This is the existing behaviour
 when no namespaces are needed (e.g. single-developer setup).
 
-## Runner-side wiring (pytest + Playwright)
+## Guarded Mode (Playwright only, since `@spltz/viur-testing` 0.3.0)
 
-```python
-# tests/conftest.py
-import pytest
-from viur.testing import require_test_mode, finish
+For occasional smoke tests on a deployed instance — landing pages,
+public catalog browsing, public marketing pages — spinning up a
+dedicated test backend is overkill. The Playwright companion package
+auto-detects this case: when the backend does **not** expose
+`/_test/config/status` (HTTP 404), it falls into **Guarded Mode** —
+no test database, no token header, no `_test/` endpoints. Tests run
+as a normal browser would.
 
-_BASE_URL = "http://localhost:8080"
+Because this bypasses the bilateral guarantee, Guarded Mode demands
+a fresh **6-digit PIN confirmation** on the terminal every single
+run. No persisted ACK, no env-var bypass; no TTY → no run. Specs
+that depend on `_test/` infrastructure (`serverStatus`, `backendApi`,
+`callTestModule`) are auto-skipped in Guarded Mode — only specs
+that act as a regular browser actually execute.
 
+See `playwright/README.md` for the auto-detect table and the full
+run-mode behaviour.
 
-@pytest.fixture(scope="session")
-def test_session():
-    status = require_test_mode(_BASE_URL)
-    yield status
-    finish(_BASE_URL, status.token)
+## Runner-side wiring (Playwright + npm)
+
+The e2e runner ships as the npm package
+[`@spltz/viur-testing`](https://www.npmjs.com/package/@spltz/viur-testing)
+in this same repo (`playwright/`). Scaffold a working suite next to
+your project with:
+
+```sh
+npx viur-testing-init
 ```
 
-If the server is not in test mode, points at the wrong database, or
-the token hash does not match the returned token, `require_test_mode`
-raises `TestModePreflightError` and no test ever runs.
+The CLI asks interactively for the scaffold mode (Test Mode for a
+local dev server armed with `VIUR_TESTING_ENABLE=1`, Guarded Mode
+for tests against an already-deployed instance) and drops a working
+`package.json`, `tsconfig.json`, `playwright.config.ts`,
+`vite.e2e.config.ts`, `.env.e2e`, `.gitignore` and an example spec.
+To skip the prompt, pass `--mode test|guarded` or `--guarded`.
 
-For Playwright, inject the token as a default header on the browser
-context:
+In the scaffolded directory:
 
-```python
-@pytest.fixture
-def context(browser, test_session):
-    return browser.new_context(
-        extra_http_headers={"X-Viur-Test-Token": test_session.token},
-    )
+```sh
+cd testing/e2e
+npm install
+npx playwright install --with-deps chromium
+E2E_BACKEND_URL=http://localhost:8080 npm test
 ```
+
+The generated `playwright.config.ts` wires `createGlobalSetup()` /
+`createGlobalTeardown()` which probe `/_test/config/status` and pick
+the mode automatically. In Test Mode the fixtures inject
+`X-Viur-Test-Token` on every browser and APIRequestContext call; in
+Guarded Mode a 6-digit PIN gate appears on the terminal and specs
+that depend on `/_test/` infrastructure auto-skip.
+
+The Python-side primitives — `require_test_mode`, `finish`,
+`ServerStatus`, `TestModePreflightError` — are still available for
+hosts that drive their own runners (Python smoke harness, custom CI
+helpers); see the [Runner API docs](https://sprengplatz.github.io/viur-testing/api/runner/).
 
 ## Naming
 

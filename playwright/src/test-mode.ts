@@ -55,24 +55,50 @@ export interface RequireTestModeOptions {
 }
 
 /**
- * Preflight check: confirm the server is in test mode and grab the
- * session token. Throws if any of the bilateral handshake invariants
- * fails — see the body for the full check list. Mirrors Python's
- * `viur.testing.require_test_mode` so the JS-side and the Python-side
- * runners enforce the same contract.
+ * Result of :func:`probeStatusEndpoint` — distinguishes the three
+ * outcomes the auto-detect (and the explicit ``requireTestMode``)
+ * need to branch on:
  *
- * Uses a fresh APIRequestContext (no shared cookies, no extra headers)
- * because the bootstrap call must run without the token header.
+ * - ``armed``: HTTP 200 + a fully validated test-mode payload.
+ * - ``unarmed``: HTTP 404 — the server is running but does NOT have
+ *   the ``/_test/config/status`` endpoint mounted. In auto-detect
+ *   that means we enter Guarded Mode; in the explicit
+ *   ``requireTestMode`` that means we throw "not in test mode".
+ * - Anything else (5xx, timeout, 200-but-malformed-JSON,
+ *   200-but-failing-validation) is **never** returned — those
+ *   conditions throw straight out of the helper, because silently
+ *   downgrading an ambiguous server state to Guarded Mode would
+ *   defeat the whole point of the explicit PIN gate.
  */
-export async function requireTestMode(opts: RequireTestModeOptions): Promise<ServerStatus> {
+export type StatusProbeResult =
+  | { kind: "armed"; status: ServerStatus }
+  | { kind: "unarmed" }
+
+/**
+ * Internal: do the POST + parse + validate dance shared by
+ * :func:`requireTestMode` and the auto-detect logic in
+ * ``mode-detect.ts``. Both call sites want the same network handling
+ * and integrity checks; they differ only in what they do with the
+ * ``unarmed`` outcome.
+ *
+ * Validation order matches Python's ``require_test_mode``:
+ * ``test_mode`` → ``is_dev_server`` → ``database`` →
+ * ``namespace`` → ``project_id`` → token non-empty → ``token_hash``.
+ */
+export async function probeStatusEndpoint(
+  opts: RequireTestModeOptions,
+): Promise<StatusProbeResult> {
   const ctx = await playwrightRequest.newContext({ baseURL: opts.backendUrl })
   try {
     const resp = await ctx.post("/json/_test/config/status")
+    if (resp.status() === 404) {
+      return { kind: "unarmed" }
+    }
     if (!resp.ok()) {
       throw new Error(
         `viur-testing preflight failed: POST /json/_test/config/status returned ` +
-          `${resp.status()} ${resp.statusText()}. Is the backend running with ` +
-          `VIUR_TESTING_ENABLE=1 and is viur-testing wired into main.py?`,
+          `${resp.status()} ${resp.statusText()}. Ambiguous server state — ` +
+          `refusing to choose between test mode and guarded mode automatically.`,
       )
     }
     const status = (await resp.json()) as ServerStatus
@@ -141,10 +167,35 @@ export async function requireTestMode(opts: RequireTestModeOptions): Promise<Ser
           `tampered with or the server is on a different version.`,
       )
     }
-    return status
+    return { kind: "armed", status }
   } finally {
     await ctx.dispose()
   }
+}
+
+/**
+ * Preflight check: confirm the server is in test mode and grab the
+ * session token. Throws if any of the bilateral handshake invariants
+ * fails — see :func:`probeStatusEndpoint` for the full check list.
+ * Mirrors Python's `viur.testing.require_test_mode` so the JS-side
+ * and the Python-side runners enforce the same contract.
+ *
+ * Unlike the auto-detect path used by ``createGlobalSetup``, this
+ * function treats a 404 on ``/_test/config/status`` as a failure —
+ * use it when you specifically want "test mode armed, or no test
+ * run at all".
+ */
+export async function requireTestMode(opts: RequireTestModeOptions): Promise<ServerStatus> {
+  const probe = await probeStatusEndpoint(opts)
+  if (probe.kind === "unarmed") {
+    throw new Error(
+      `viur-testing preflight failed: POST /json/_test/config/status returned ` +
+        `404 — the backend at ${opts.backendUrl} is not in test mode. ` +
+        `Is the backend running with VIUR_TESTING_ENABLE=1 and is viur-testing ` +
+        `wired into main.py?`,
+    )
+  }
+  return probe.status
 }
 
 /**

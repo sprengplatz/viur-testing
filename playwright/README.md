@@ -140,6 +140,34 @@ Read by `createGlobalSetup()` (and indirectly by the fixtures):
 | `E2E_TEST_NAMESPACE` | _(unset)_ | Unset = skip namespace check; empty string = expect default namespace; non-empty = expect exact match. |
 | `E2E_TEST_PROJECT_ID` | _(unset)_ | When set, the server's reported GCP `project_id` must match exactly — useful in CI where the dev server is pinned to a specific project. |
 
+## Run modes (auto-detect)
+
+`createGlobalSetup()` probes `POST /json/_test/config/status` on the
+configured backend and picks the mode automatically:
+
+| Probe outcome | Mode | What happens |
+|---|---|---|
+| 200 + valid test-mode payload | **Test Mode** | Token issued, `.auth/token.json` written, fixtures inject `X-Viur-Test-Token` on every request. The existing flow from earlier versions. |
+| 404 | **Guarded Mode** | Interactive 6-digit PIN prompt on the terminal. On confirmation, the suite runs against the live backend without any token injection. Specs that depend on `_test/` infrastructure (`serverStatus`, `backendApi`, `callTestModule`) are **auto-skipped**, not failed. |
+| 5xx, timeout, malformed JSON, integrity check fail | **Hard error** | Ambiguous server state — never silently falls back to Guarded Mode. |
+
+Guarded Mode is meant for **read-only smoke tests against public
+pages** of a deployed application (landing page renders, footer links
+exist, login form shows, …) where spinning up a dedicated test
+backend would be overkill or impossible. The PIN prompt is the
+mandatory human-in-the-loop gate: it forces you to look at the URL
+on the screen and type a fresh 6-digit code every run. No persisted
+ACK, no env-var bypass.
+
+If `stdin` is not a TTY (CI, background process, IDE task without an
+attached terminal), Guarded Mode aborts immediately — there is no
+human to confirm. CI either points at a test-mode-armed backend
+(falls into Test Mode automatically) or fails the run.
+
+The detected mode is propagated to workers via `VIUR_TESTING_MODE`
+(`"test"` or `"guarded"`). Fixtures and `callTestModule` read this
+to decide whether to skip.
+
 ## Hard guarantee
 
 Specs **must** import `test` and `expect` from `@spltz/viur-testing`

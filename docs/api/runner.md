@@ -1,7 +1,14 @@
 # Runner API
 
-The functions and data classes the test runner (pytest, Playwright,
-…) uses to talk to a server that has been put into test mode.
+The Python-side functions and data classes for talking to a
+viur-testing-armed server. Used by hosts that drive their own
+runner (a custom smoke harness, an internal CI tool, …).
+
+The canonical Playwright e2e wiring lives in the npm companion
+package [`@spltz/viur-testing`](https://www.npmjs.com/package/@spltz/viur-testing)
+and is driven by [`createGlobalSetup()`](../guarded-mode.md) — the
+primitives below are the same handshake, exposed for Python
+callers that want to reuse it.
 
 ## require_test_mode
 

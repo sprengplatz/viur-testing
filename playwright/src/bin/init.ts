@@ -4,16 +4,38 @@
  * Drops the standard set of e2e-suite files into a target directory.
  * Re-runnable — already-existing files are skipped, never overwritten.
  *
+ * Two scaffold modes:
+ *
+ *   - **test** (default): backend is a local dev server with
+ *     ``VIUR_TESTING_ENABLE=1``. Scaffolds a Vite-proxy config so
+ *     the dev server is a transparent test-mode adapter, plus an
+ *     example spec that consumes the ``serverStatus`` fixture.
+ *
+ *   - **guarded**: backend is an already-deployed instance with no
+ *     ``/_test/`` endpoints. Scaffolds a slim setup that drives the
+ *     live application via Playwright directly — no Vite, no
+ *     ``.env.e2e``, no token-aware fixtures. The example spec is a
+ *     public-page smoke test.
+ *
+ * Mode selection happens interactively when stdin is a TTY (the
+ * common case for ``npx viur-testing-init``). The CLI also accepts
+ * ``--mode test|guarded`` (and the ``--guarded`` shortcut) to skip
+ * the prompt — useful when scaffolding from a script or CI.
+ *
  * The entry point lives in `bin/init.mjs` (a tiny shebang wrapper)
  * so npm can resolve the bin without TS-compiler shebang quirks.
  */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { dirname, isAbsolute, join, resolve } from "node:path"
+import { createInterface, type Interface as ReadlineInterface } from "node:readline/promises"
+import { stdin, stdout } from "node:process"
 import { fileURLToPath } from "node:url"
 
 /** Default subdirectory beneath `cwd` where the e2e suite gets scaffolded. */
 const DEFAULT_RELATIVE_TARGET = "testing/e2e"
+
+export type ScaffoldMode = "test" | "guarded"
 
 /**
  * SemVer caret range for the published ``@spltz/viur-testing`` package,
@@ -48,7 +70,38 @@ function detectOwnVersionRange(): string {
   return "^0.1.0"
 }
 
-const TEMPLATES: Record<string, string> = {
+// ---------------------------------------------------------------------------
+// Templates
+// ---------------------------------------------------------------------------
+
+const COMMON_TEMPLATES: Record<string, string> = {
+  "tsconfig.json": `{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "esModuleInterop": true,
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "types": ["node", "@playwright/test"]
+  },
+  "include": ["**/*.ts", "playwright.config.ts"],
+  "exclude": ["node_modules", "test-results", "playwright-report"]
+}
+`,
+
+  ".gitignore": `node_modules/
+test-results/
+playwright-report/
+playwright/.cache/
+.auth/
+*.log
+`,
+}
+
+const TEST_MODE_TEMPLATES: Record<string, string> = {
   "package.json": `{
   "name": "PROJECT-e2e",
   "private": true,
@@ -70,23 +123,6 @@ const TEMPLATES: Record<string, string> = {
     "@types/node": "^22.10.0",
     "typescript": "^5.6.0"
   }
-}
-`,
-
-  "tsconfig.json": `{
-  "compilerOptions": {
-    "target": "ES2022",
-    "module": "ESNext",
-    "moduleResolution": "Bundler",
-    "esModuleInterop": true,
-    "strict": true,
-    "noUncheckedIndexedAccess": true,
-    "skipLibCheck": true,
-    "resolveJsonModule": true,
-    "types": ["node", "@playwright/test"]
-  },
-  "include": ["**/*.ts", "playwright.config.ts"],
-  "exclude": ["node_modules", "test-results", "playwright-report"]
 }
 `,
 
@@ -209,16 +245,9 @@ export default defineConfig(e2eConfig)
 VITE_API_URL="http://localhost:8081"
 `,
 
-  ".gitignore": `node_modules/
-test-results/
-playwright-report/
-playwright/.cache/
-.auth/
-*.log
-`,
-
   "tests/example.spec.ts": `/**
- * example.spec.ts — minimal smoke test to verify the scaffolding works.
+ * example.spec.ts — minimal smoke test to verify the scaffolding works
+ * in TEST MODE (backend armed with VIUR_TESTING_ENABLE=1).
  *
  * Delete this file once you have a real test suite.
  */
@@ -233,6 +262,186 @@ test("backend reports a valid test mode session", async ({ serverStatus }) => {
 `,
 }
 
+const GUARDED_MODE_TEMPLATES: Record<string, string> = {
+  "package.json": `{
+  "name": "PROJECT-e2e",
+  "private": true,
+  "version": "0.1.0",
+  "description": "End-to-end Playwright smoke tests for PROJECT (guarded mode).",
+  "type": "module",
+  "scripts": {
+    "test": "playwright test",
+    "test:headed": "playwright test --headed",
+    "test:ui": "playwright test --ui",
+    "report": "playwright show-report",
+    "install-browsers": "playwright install --with-deps chromium"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.49.0",
+    "@spltz/viur-testing": "VIUR_TESTING_VERSION_RANGE",
+    "@types/node": "^22.10.0",
+    "typescript": "^5.6.0"
+  }
+}
+`,
+
+  "playwright.config.ts": `import { defineConfig, devices } from "@playwright/test"
+
+// Guarded Mode: tests run against an already-deployed instance.
+// Set E2E_BACKEND_URL to point at the target, e.g.:
+//   E2E_BACKEND_URL=https://staging.example.com npm test
+//
+// On every run the runner probes /json/_test/config/status — if it
+// returns 404 (no test mode), an interactive 6-digit PIN gate
+// appears in the terminal. Wrong PIN aborts; the suite never
+// starts. See https://sprengplatz.github.io/viur-testing/guarded-mode/
+// for details.
+const BACKEND_URL = process.env.E2E_BACKEND_URL ?? "https://example.com"
+
+// globalSetup picks this up via process.env — set here so a single
+// override on the playwright CLI flows everywhere consistently.
+process.env.E2E_BACKEND_URL = BACKEND_URL
+
+export default defineConfig({
+  testDir: "./tests",
+  outputDir: "./test-results",
+  fullyParallel: false,
+  forbidOnly: !!process.env.CI,
+  retries: process.env.CI ? 1 : 0,
+  workers: 1,
+  reporter: process.env.CI
+    ? [["github"], ["html", { open: "never" }]]
+    : [["list"], ["html", { open: "never" }]],
+  globalSetup: "@spltz/viur-testing/global-setup",
+  globalTeardown: "@spltz/viur-testing/global-teardown",
+
+  use: {
+    baseURL: BACKEND_URL,
+    trace: "retain-on-failure",
+    video: "retain-on-failure",
+    screenshot: "only-on-failure",
+  },
+
+  projects: [
+    {
+      name: "chromium",
+      use: { ...devices["Desktop Chrome"] },
+    },
+  ],
+})
+`,
+
+  "tests/example.spec.ts": `/**
+ * example.spec.ts — public-page smoke test for GUARDED MODE.
+ *
+ * Replace the body with assertions that match your actual deployed
+ * page. Delete this file once you have a real test suite.
+ *
+ * See https://sprengplatz.github.io/viur-testing/guarded-mode/ for
+ * details on which fixtures auto-skip and why.
+ */
+
+import { test, expect } from "@spltz/viur-testing"
+
+test("homepage renders", async ({ page }) => {
+  await page.goto("/")
+  // Trivial check: any non-empty <title>. Tighten this once you
+  // know what the page actually looks like.
+  await expect(page).toHaveTitle(/.+/)
+})
+`,
+}
+
+function buildTemplates(mode: ScaffoldMode): Record<string, string> {
+  const modeSpecific = mode === "guarded" ? GUARDED_MODE_TEMPLATES : TEST_MODE_TEMPLATES
+  return { ...COMMON_TEMPLATES, ...modeSpecific }
+}
+
+// ---------------------------------------------------------------------------
+// Interactive prompt
+// ---------------------------------------------------------------------------
+
+/**
+ * Injectable I/O surface for the scaffold-mode prompt so the
+ * interactive path is testable without a real TTY. Production code
+ * uses :data:`defaultInitPromptIo`.
+ */
+export interface InitPromptIo {
+  isTty(): boolean
+  writeLine(line: string): void
+  readLine(prompt: string): Promise<string>
+}
+
+export const defaultInitPromptIo: InitPromptIo = {
+  isTty(): boolean {
+    return Boolean(stdin.isTTY)
+  },
+  writeLine(line: string): void {
+    stdout.write(line + "\n")
+  },
+  async readLine(prompt: string): Promise<string> {
+    const rl: ReadlineInterface = createInterface({ input: stdin, output: stdout })
+    try {
+      return await rl.question(prompt)
+    } finally {
+      rl.close()
+    }
+  },
+}
+
+async function promptForMode(io: InitPromptIo): Promise<ScaffoldMode> {
+  io.writeLine("")
+  io.writeLine("Which scaffold do you want?")
+  io.writeLine("")
+  io.writeLine("  [1] Test Mode  (default)")
+  io.writeLine("      Backend is a local dev server with VIUR_TESTING_ENABLE=1.")
+  io.writeLine("      Scaffolds Vite proxy + token-aware fixtures.")
+  io.writeLine("")
+  io.writeLine("  [2] Guarded Mode")
+  io.writeLine("      Backend is an already-deployed instance (no test database,")
+  io.writeLine("      no _test/ endpoints). Scaffolds a slim setup; specs that")
+  io.writeLine("      need _test infrastructure auto-skip.")
+  io.writeLine("")
+
+  const reply = (await io.readLine("  Select [1/2, default 1]: ")).trim().toLowerCase()
+  if (reply === "" || reply === "1" || reply === "test") return "test"
+  if (reply === "2" || reply === "guarded" || reply === "g") return "guarded"
+  // Anything else → bail with a clear message rather than silently
+  // defaulting; an unexpected input usually means the user meant
+  // something specific.
+  throw new Error(
+    `viur-testing-init: unrecognised selection ${JSON.stringify(reply)}. ` +
+      `Expected 1/2 (or "test"/"guarded"). Re-run and pick a valid option, ` +
+      `or pass --mode <test|guarded> to skip the prompt.`,
+  )
+}
+
+/**
+ * Resolve the scaffold mode. Explicit ``opts.mode`` wins; otherwise
+ * we prompt when stdin is a TTY, or default to ``test`` (with a log
+ * line) when it is not — that preserves the pre-0.3 behaviour of
+ * ``viur-testing-init`` in non-interactive contexts (CI scaffolding,
+ * IDE tasks without TTY).
+ */
+async function resolveMode(
+  explicit: ScaffoldMode | undefined,
+  io: InitPromptIo,
+): Promise<ScaffoldMode> {
+  if (explicit !== undefined) return explicit
+  if (!io.isTty()) {
+    console.log(
+      `[viur-testing-init] no TTY — defaulting to "test" mode. ` +
+        `Pass --mode test|guarded (or --guarded) to override.`,
+    )
+    return "test"
+  }
+  return await promptForMode(io)
+}
+
+// ---------------------------------------------------------------------------
+// initProject
+// ---------------------------------------------------------------------------
+
 export interface InitOptions {
   /** Directory the CLI was invoked from. Default: `process.cwd()`. */
   cwd?: string
@@ -245,14 +454,25 @@ export interface InitOptions {
   target?: string
   /** Override the placeholder PROJECT name in templates. */
   projectName?: string
+  /**
+   * Scaffold mode. When omitted, prompts on TTY and defaults to
+   * ``"test"`` on non-TTY. Pass explicitly to skip the prompt.
+   */
+  mode?: ScaffoldMode
+  /** Prompt I/O override — used in tests. */
+  _io?: InitPromptIo
 }
 
-export function initProject(opts: InitOptions = {}): void {
+export async function initProject(opts: InitOptions = {}): Promise<void> {
   const cwd = opts.cwd ?? process.cwd()
   const targetDir = resolveTargetDir(cwd, opts.target)
   const projectName = opts.projectName ?? deriveProjectName(targetDir)
   const viurTestingVersionRange = detectOwnVersionRange()
+  const io = opts._io ?? defaultInitPromptIo
+  const mode = await resolveMode(opts.mode, io)
+  const templates = buildTemplates(mode)
 
+  console.log(`[viur-testing-init] mode: ${mode}`)
   console.log(`[viur-testing-init] scaffolding into ${targetDir}`)
   if (projectName !== "PROJECT") {
     console.log(`[viur-testing-init] project name: ${projectName}`)
@@ -262,7 +482,7 @@ export function initProject(opts: InitOptions = {}): void {
   let written = 0
   let skipped = 0
 
-  for (const [relPath, rawContent] of Object.entries(TEMPLATES)) {
+  for (const [relPath, rawContent] of Object.entries(templates)) {
     const fullPath = join(targetDir, relPath)
     if (existsSync(fullPath)) {
       console.log(`  skip   ${relPath} (exists)`)
@@ -284,10 +504,16 @@ export function initProject(opts: InitOptions = {}): void {
   if (written > 0) {
     console.log()
     console.log("Next steps:")
-    console.log("  1. Adjust the TODO markers in `vite.e2e.config.ts`.")
-    console.log("  2. Run `npm install`.")
-    console.log("  3. Boot your backend with `VIUR_TESTING_ENABLE=1 viur run`.")
-    console.log("  4. `npm test`.")
+    if (mode === "test") {
+      console.log("  1. Adjust the TODO markers in `vite.e2e.config.ts`.")
+      console.log("  2. Run `npm install`.")
+      console.log("  3. Boot your backend with `VIUR_TESTING_ENABLE=1 viur run`.")
+      console.log("  4. `npm test`.")
+    } else {
+      console.log("  1. Set E2E_BACKEND_URL to your deployed backend's origin.")
+      console.log("  2. Run `npm install`.")
+      console.log("  3. `npm test` — confirm the 6-digit PIN gate on the terminal.")
+    }
   }
 }
 

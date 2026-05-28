@@ -10,11 +10,26 @@
 export {
   TOKEN_HEADER,
   requireTestMode,
+  probeStatusEndpoint,
   finishTestMode,
   authenticatedApi,
   type ServerStatus,
   type RequireTestModeOptions,
+  type StatusProbeResult,
 } from "./test-mode.js"
+
+export {
+  detectMode,
+  type DetectedMode,
+  type DetectModeOptions,
+} from "./mode-detect.js"
+
+export {
+  runPinChallenge,
+  defaultPinChallengeIo,
+  type PinChallengeIo,
+  type RunPinChallengeOptions,
+} from "./pin-challenge.js"
 
 export {
   test,
@@ -32,6 +47,7 @@ export { assertNoDirectPlaywrightImports } from "./forbidden-imports.js"
 
 export {
   createGlobalSetup,
+  MODE_ENV_VAR,
   type GlobalSetupOptions,
 } from "./global-setup.js"
 
