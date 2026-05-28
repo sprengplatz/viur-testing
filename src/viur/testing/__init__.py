@@ -62,7 +62,7 @@ from .constants import DEFAULT_DATABASE, TOKEN_HEADER
 from .protection import protect
 from .runner import ServerStatus, TestModePreflightError, finish, require_test_mode
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 __all__ = [
     "DEFAULT_DATABASE",
