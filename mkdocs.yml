@@ -35,6 +35,7 @@ theme:
 nav:
   - Home: index.md
   - Getting started: getting-started.md
+  - Dev-Mirror Mode: dev-mirror-mode.md
   - Guarded Mode: guarded-mode.md
   - API reference:
       - Host API: api/host.md

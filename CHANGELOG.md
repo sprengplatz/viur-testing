@@ -7,6 +7,43 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### Added
+
+- **Dev-Mirror mode** (Python side) — removes the "my `viur-tests`
+  slice is empty, so I run a second server against the live data"
+  friction. Two parts:
+  - **Managed seeding** — `scripts/dev_mirror_import.py` copies the live
+    `(default)` database into the `viur-tests` database using
+    `gcloud firestore export`/`import` (the managed path that supports
+    *named* databases). Reads `(default)` through a **read-only** client
+    (`mirror.ReadOnlyClient`) and excludes viur-core secret/system kinds
+    (`viur-conf` incl. hmacKey, `viur-session`) **at export**, so secrets
+    never reach the GCS bucket. PIN-gated.
+  - **Tokenless browsing** — set `VIUR_TESTING_TOKENLESS=1` and, before
+    the real server boots, a fresh 6-digit PIN arms tokenless browsing
+    for a whitelisted dev server. Requests may then skip the
+    `X-Viur-Test-Token` header (`ConfigModule.tokenless_allowed()` +
+    `is_dev_server`, re-checked per request) — only ever opening the
+    `viur-tests` slice, never `(default)`.
+  - **Server-side PIN challenge** (`viur.testing.pin`), the Python analog
+    of the runner-side Guarded-Mode PIN: fresh per use, one try, no
+    persisted ACK, **no TTY → hard abort** (do not set the env var / run
+    the script in CI).
+  - New public surface: `viur.testing.arm_tokenless_browsing(...)`; new
+    `setup()` params `tokenless_app_ids`, `tokenless_env_var`.
+
+### Note
+
+- Managed import preserves keys **1:1**, so relations stay intact without
+  re-keying — but it cannot remap namespaces. The seed therefore lands in
+  `viur-tests`' **default namespace**: every developer shares one slice
+  (**no per-developer namespace isolation** in this mode).
+- Seeding deliberately **reads the live `(default)` database** (read-only).
+  That is a conscious, documented relaxation of the "never reads
+  production" half of the guarantee. Copying live data into a test slice
+  has data-protection implications — review the export exclude list
+  (`--exclude`) for PII before running.
+
 ## [0.3.0] — 2026-05-28
 
 `@spltz/viur-testing` only — the Python package stays at 0.2.0.

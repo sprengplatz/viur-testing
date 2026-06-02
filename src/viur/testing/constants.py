@@ -44,3 +44,37 @@ is one of these values and ``<renderer>`` is a single optional segment
 (``json``, ``vi``, ``html``, ...). Anything deeper or differently shaped
 is treated as a regular request and requires the token.
 """
+
+TOKENLESS_ENV_VAR = "VIUR_TESTING_TOKENLESS"
+"""Env var that opts a dev-server boot into **tokenless browsing**.
+
+When set (and test mode is armed), :func:`viur.testing.mirror.arm_tokenless_browsing`
+runs *before* the real server boots: behind a fresh 6-digit PIN it arms
+tokenless browsing for the (whitelisted) dev server, so requests may then skip
+the ``X-Viur-Test-Token`` header. No TTY → hard abort, so this must **not** be
+set in CI. Seeding the ``viur-tests`` slice is done separately by
+``scripts/dev_mirror_import.py``.
+"""
+
+MIRROR_EXCLUDE_KINDS: frozenset[str] = frozenset({
+    "viur-conf",
+    "viur-session",
+})
+"""Datastore kinds the managed seed script (``scripts/dev_mirror_import.py``)
+must never copy from the live ``(default)`` database — viur-core secret /
+per-instance system state (verified against viur-core 3.x):
+
+- ``viur-conf`` — the singleton ``Key("viur-conf", "viur-conf")`` entity; the
+  ``hmacKey`` lives as a *property* on it (not a separate kind), so excluding
+  this kind keeps the secret out of the GCS export entirely.
+- ``viur-session`` — ``Session.kindName``; sessions are per-instance and must
+  not leak into the test slice.
+
+The seed script additionally skips ``__*__`` reserved kinds. The ``viur-tests``
+database keeps its own ``viur-conf``/hmacKey + admin user from viur-core's
+first-boot startup tasks.
+
+The managed export pulls in whatever kinds you do NOT exclude — widen this
+(e.g. to keep PII-heavy kinds out of the test slice) via the script's
+``--exclude`` flag.
+"""

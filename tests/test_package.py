@@ -17,6 +17,7 @@ def test_top_level_exports():
         "protect",
         "register_finish_hook",
         "register_modules",
+        "arm_tokenless_browsing",
         "register_status_hook",
         "register_test_submodule",
         "require_test_mode",
@@ -400,6 +401,41 @@ def test_setup_honours_custom_namespace_env_var(monkeypatch):
     monkeypatch.setattr(viur.testing, "protect", lambda: calls.append(("protect",)))
     viur.testing.setup(namespace_env_var="MY_NS")
     assert calls[0] == ("activate", {"database": "viur-tests", "namespace": "bob"})
+
+
+# ---------------------------------------------------------------------------
+# setup() — tokenless-browsing wiring
+# ---------------------------------------------------------------------------
+
+
+def test_setup_arms_tokenless_when_env_set(monkeypatch):
+    """``VIUR_TESTING_TOKENLESS`` set → setup() calls arm_tokenless_browsing
+    after activate(), forwarding the whitelist."""
+    calls: list = []
+    monkeypatch.setenv("VIUR_TESTING_ENABLE", "1")
+    monkeypatch.setenv("VIUR_TESTING_TOKENLESS", "1")
+    monkeypatch.delenv("VIUR_TESTING_NAMESPACE", raising=False)
+    monkeypatch.setattr(viur.testing, "activate", lambda **kw: None)
+    monkeypatch.setattr(viur.testing, "protect", lambda: None)
+    monkeypatch.setattr(
+        viur.testing, "arm_tokenless_browsing", lambda **kw: calls.append(kw)
+    )
+    viur.testing.setup(api_dir=None, tokenless_app_ids=["proj-x"])
+    assert calls == [{"tokenless_app_ids": ["proj-x"]}]
+
+
+def test_setup_skips_tokenless_when_env_unset(monkeypatch):
+    calls: list = []
+    monkeypatch.setenv("VIUR_TESTING_ENABLE", "1")
+    monkeypatch.delenv("VIUR_TESTING_TOKENLESS", raising=False)
+    monkeypatch.delenv("VIUR_TESTING_NAMESPACE", raising=False)
+    monkeypatch.setattr(viur.testing, "activate", lambda **kw: None)
+    monkeypatch.setattr(viur.testing, "protect", lambda: None)
+    monkeypatch.setattr(
+        viur.testing, "arm_tokenless_browsing", lambda **kw: calls.append(kw)
+    )
+    viur.testing.setup(api_dir=None)
+    assert calls == []
 
 
 # ---------------------------------------------------------------------------

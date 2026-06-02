@@ -58,7 +58,8 @@ those classes. Import them from their concrete submodules, and only
 import os as _os
 
 from .activation import activate
-from .constants import DEFAULT_DATABASE, TOKEN_HEADER
+from .constants import DEFAULT_DATABASE, TOKEN_HEADER, TOKENLESS_ENV_VAR
+from .mirror import arm_tokenless_browsing
 from .protection import protect
 from .runner import ServerStatus, TestModePreflightError, finish, require_test_mode
 
@@ -70,6 +71,7 @@ __all__ = [
     "TOKEN_HEADER",
     "TestModePreflightError",
     "activate",
+    "arm_tokenless_browsing",
     "finish",
     "protect",
     "register_finish_hook",
@@ -154,6 +156,8 @@ def setup(
     namespace: str | None = None,
     namespace_env_var: str = "VIUR_TESTING_NAMESPACE",
     api_dir: str | None = "testing",
+    tokenless_app_ids: list[str] | None = None,
+    tokenless_env_var: str = TOKENLESS_ENV_VAR,
 ) -> None:
     """One-call host-side wiring for ``main.py``.
 
@@ -219,11 +223,27 @@ def setup(
         info message is printed and setup continues — that helps
         spot misconfigurations early (you'd otherwise see mysterious
         ``404 /_test/<spec>/setup`` errors from the runner side).
+    :param tokenless_app_ids: Whitelist of GCP project ids allowed to enable
+        **tokenless browsing** of the ``viur-tests`` slice (skip the
+        ``X-Viur-Test-Token`` header). Kept here, in ``main.py``, so it is
+        reviewed in PRs rather than drifting in a dotfile. ``None``/empty
+        disables tokenless regardless of the env var.
+    :param tokenless_env_var: Name of the env var that opts a boot into
+        tokenless browsing. Default :data:`VIUR_TESTING_TOKENLESS`. When set
+        (and test mode is armed), :func:`arm_tokenless_browsing` runs after
+        :func:`activate` and before the real server boots: a fresh PIN, then
+        tokenless armed. No TTY → hard abort, so do not set this in CI.
+
+        Seeding the ``viur-tests`` slice with live data is a separate,
+        out-of-band step — see ``scripts/dev_mirror_import.py`` (managed
+        ``gcloud firestore export``/``import``).
     """
     if _os.environ.get(enable_env_var):
         if namespace is None:
             namespace = _os.environ.get(namespace_env_var) or None
         activate(database=database, namespace=namespace)
+        if _os.environ.get(tokenless_env_var):
+            arm_tokenless_browsing(tokenless_app_ids=tokenless_app_ids)
         if api_dir is not None:
             _load_project_api(api_dir)
     protect()

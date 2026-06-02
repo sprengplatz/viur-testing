@@ -76,6 +76,28 @@ def test_validate_passes_with_correct_token():
     assert result is None
 
 
+def test_validate_tokenless_allows_without_token_in_dev(conf_instance):
+    """Dev-Mirror tokenless: armed + whitelisted + namespaced + dev server →
+    any request passes without a token header."""
+    conf_instance.is_dev_server = True
+    ConfigModule.set_active(database="viur-tests", project_id="p", namespace="ak")
+    ConfigModule.arm_tokenless(["p"])
+    result = TokenValidator.validate(_make_request(headers={}))
+    assert result is None
+
+
+def test_validate_tokenless_still_requires_token_outside_dev(conf_instance):
+    """Even when tokenless is armed, a non-dev process must NOT open up — the
+    validator re-checks is_dev_server and falls back to the token path."""
+    conf_instance.is_dev_server = False
+    ConfigModule.set_active(database="viur-tests", project_id="p", namespace="ak")
+    ConfigModule.set_token("secret")
+    ConfigModule.arm_tokenless(["p"])
+    result = TokenValidator.validate(_make_request(headers={}))
+    assert result is not None
+    assert result[0] == 403  # missing token — tokenless bypass did not fire
+
+
 @pytest.mark.parametrize(
     "path",
     [

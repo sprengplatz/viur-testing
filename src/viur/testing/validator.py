@@ -114,6 +114,18 @@ class TokenValidator(RequestValidator):
             # primes state in lockstep — but if it does, fail closed.
             return 403, "Forbidden", "viur-test: server is not in test mode"
 
+        # Dev-Mirror tokenless browsing: when armed for this (whitelisted,
+        # namespaced) dev process, requests may skip the token entirely. This
+        # only ever opens the swapped-in viur-tests/<namespace> slice — never
+        # the live (default) DB — and only on a dev server. is_dev_server is
+        # re-checked here so a stale-but-armed state cannot open anything in a
+        # non-dev process.
+        if ConfigModule.tokenless_allowed():
+            from viur.core.config import conf  # noqa: PLC0415
+
+            if getattr(conf.instance, "is_dev_server", False):
+                return None
+
         path = getattr(request.request, "path", None)
         if _is_bootstrap_path(path, BOOTSTRAP_ACTIONS):
             return None

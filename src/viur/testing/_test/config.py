@@ -101,6 +101,11 @@ class ConfigModule(Module):
     _status_hooks: t.ClassVar[list[t.Callable[[], dict | None]]] = []
     _finish_hooks: t.ClassVar[list[t.Callable[[], dict | None]]] = []
 
+    # Dev-Mirror tokenless-browsing state (set by
+    # :func:`viur.testing.mirror.arm_tokenless_browsing` after the PIN).
+    _tokenless_armed: t.ClassVar[bool] = False
+    _tokenless_app_ids: t.ClassVar[tuple[str, ...]] = ()
+
     @classmethod
     def is_active(cls) -> bool:
         """Whether :func:`viur.testing.activate` has wired the process."""
@@ -110,6 +115,37 @@ class ConfigModule(Module):
     def has_token(cls) -> bool:
         """Whether a session is currently established (a token is issued)."""
         return cls._token is not None
+
+    @classmethod
+    def arm_tokenless(cls, app_ids: t.Iterable[str]) -> None:
+        """Enable Dev-Mirror tokenless browsing for this process.
+
+        Called by :func:`viur.testing.mirror.arm_tokenless_browsing` once the
+        PIN is confirmed. The per-request gate (:meth:`tokenless_allowed`)
+        still requires the running project to be in ``app_ids``; the validator
+        layers ``is_dev_server`` on top.
+        """
+        cls._tokenless_armed = True
+        cls._tokenless_app_ids = tuple(app_ids)
+
+    @classmethod
+    def tokenless_allowed(cls) -> bool:
+        """Whether a request may skip the token header (Dev-Mirror).
+
+        ``True`` only when tokenless was armed (a PIN-confirmed dev boot) and
+        the active project is in the whitelist. The open slice is the
+        ``viur-tests`` database the process is wired to — never ``(default)``.
+        :class:`~viur.testing.validator.TokenValidator` additionally requires
+        ``conf.instance.is_dev_server`` per request.
+
+        Note: the managed seed lands in ``viur-tests``' default namespace, so
+        this mode does not require (or assume) a per-developer namespace.
+        """
+        return (
+            cls._tokenless_armed
+            and cls._project_id is not None
+            and cls._project_id in cls._tokenless_app_ids
+        )
 
     @classmethod
     def current_database(cls) -> str | None:
@@ -220,6 +256,8 @@ class ConfigModule(Module):
         cls._token = None
         cls._status_hooks = []
         cls._finish_hooks = []
+        cls._tokenless_armed = False
+        cls._tokenless_app_ids = ()
 
     # ----- private helpers --------------------------------------------------
 

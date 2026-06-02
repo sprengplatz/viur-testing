@@ -217,6 +217,51 @@ def test_reset_clears_everything():
 
 
 # ---------------------------------------------------------------------------
+# Dev-Mirror tokenless state
+# ---------------------------------------------------------------------------
+
+
+def test_arm_tokenless_allows_when_project_whitelisted_and_namespaced():
+    ConfigModule.set_active(database="viur-tests", project_id="p", namespace="ak")
+    ConfigModule.arm_tokenless(["p"])
+    assert ConfigModule.tokenless_allowed() is True
+
+
+def test_tokenless_not_allowed_when_not_armed():
+    ConfigModule.set_active(database="viur-tests", project_id="p", namespace="ak")
+    assert ConfigModule.tokenless_allowed() is False
+
+
+def test_tokenless_not_allowed_when_project_id_unknown():
+    # armed but never activated → _project_id is None
+    ConfigModule.arm_tokenless(["p"])
+    assert ConfigModule.tokenless_allowed() is False
+
+
+def test_tokenless_not_allowed_when_project_not_whitelisted():
+    ConfigModule.set_active(database="viur-tests", project_id="p", namespace="ak")
+    ConfigModule.arm_tokenless(["other"])
+    assert ConfigModule.tokenless_allowed() is False
+
+
+def test_tokenless_allowed_without_namespace():
+    # Managed/default-NS model: the seed lands in viur-tests' default
+    # namespace, so tokenless does NOT require a per-developer namespace.
+    ConfigModule.set_active(database="viur-tests", project_id="p")  # no namespace
+    ConfigModule.arm_tokenless(["p"])
+    assert ConfigModule.tokenless_allowed() is True
+
+
+def test_reset_clears_tokenless_state():
+    ConfigModule.set_active(database="viur-tests", project_id="p", namespace="ak")
+    ConfigModule.arm_tokenless(["p"])
+    ConfigModule.reset()
+    assert ConfigModule._tokenless_armed is False
+    assert ConfigModule._tokenless_app_ids == ()
+    assert ConfigModule.tokenless_allowed() is False
+
+
+# ---------------------------------------------------------------------------
 # status()
 # ---------------------------------------------------------------------------
 
