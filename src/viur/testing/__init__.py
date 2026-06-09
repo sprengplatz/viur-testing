@@ -235,8 +235,8 @@ def setup(
         tokenless armed. No TTY → hard abort, so do not set this in CI.
 
         Seeding the ``viur-tests`` slice with live data is a separate,
-        out-of-band step — see ``scripts/dev_mirror_import.py`` (managed
-        ``gcloud firestore export``/``import``).
+        out-of-band step — see the ``viur-mirror`` console script
+        (:mod:`viur.testing.cli`; direct namespace copy from ``(default)``).
     """
     if _os.environ.get(enable_env_var):
         if namespace is None:

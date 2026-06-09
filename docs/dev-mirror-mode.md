@@ -1,43 +1,53 @@
 # Dev-Mirror Mode
 
 *Python side. Removes the "empty test namespace → second server"
-friction by seeding the shared `viur-tests` database from live data.*
+friction by copying a live data slice into a per-developer namespace of
+`viur-tests`.*
 
 Dev-Mirror has two independent parts:
 
-1. **Seeding** (out-of-band, occasional) — a managed `gcloud` export/import
-   copies the live `(default)` database into `viur-tests`.
-2. **Tokenless browsing** (at boot, per developer) — lets you open the
+1. **Seeding** (out-of-band, occasional) — `viur-mirror` copies the live
+   `(default)` database into a developer-chosen **namespace** of `viur-tests`.
+2. **Tokenless browsing** (at boot, per developer) — lets you open your
    seeded slice in a browser without the `X-Viur-Test-Token` header.
 
-## 1. Seeding — `scripts/dev_mirror_import.py`
+## 1. Seeding — `viur-mirror`
 
 There is no local emulator: `(default)` is the **live** database and
-`viur-tests` is a separate **named** database in the same project. Named
-databases can only be export/imported via the managed Firestore Admin
-surface, which the `gcloud` CLI wraps:
+`viur-tests` is a separate **named** database in the same project. The copy
+goes through the regular `google.cloud.datastore` client, which (since v2.x)
+can target both a named `database` **and** a `namespace` — so each developer
+copies the live slice into their own namespace:
 
 ```sh
-uv run python scripts/dev_mirror_import.py --bucket gs://my-bucket/dev-mirror
+# installed console script — copy into your namespace (--project is required):
+viur-mirror --project my-gcp-project --target-namespace ak
 # restrict to specific kinds:
-uv run python scripts/dev_mirror_import.py --bucket gs://b/p --kinds user,page
+viur-mirror --project my-gcp-project --target-namespace ak --kinds user,page
+# from a source checkout without installing:
+uv run python -m viur.testing.cli --project my-gcp-project --target-namespace ak
 ```
 
 What it does:
 
 - **PIN-gated** (fresh 6 digits, no TTY → abort) because it reads live data.
-- Reads `(default)` **read-only** and **excludes** `viur-conf` (holds the
-  hmacKey) and `viur-session` already at export, so secrets never reach the
-  bucket. Widen with `--exclude`.
-- `gcloud firestore export (default) → GCS`, then `import GCS → viur-tests`;
-  `gcloud` blocks until both jobs finish (minutes).
+- Reads `(default)` **read-only** (`mirror.ReadOnlyClient`) and **excludes**
+  viur-core secret/system kinds (`viur-conf` holds the hmacKey, `viur-session`,
+  `viur-securitykey`, `viur-relations`, `file`/`file_rootNode`/`viur-blob-locks`).
+  Widen with `--exclude`.
+- Copies entity-by-entity into `viur-tests` / `ns=<target>`, re-keying each
+  entity's own key **and every key-valued property (relations)** onto the
+  target partition, in batches of up to 500 puts.
 
-!!! info "No namespace remap — shared slice"
-    Managed import preserves keys **1:1** (only the database changes), so
-    relations stay intact **without re-keying** — but the data lands in
-    `viur-tests`' **default namespace**. Every developer therefore shares one
-    seeded slice; there is **no per-developer namespace isolation** in this
-    mode. Re-run the script to refresh the shared slice.
+!!! info "Per-developer namespace — keys remapped onto the target"
+    Each entity's **own key** is rebuilt in the target namespace, so your slice
+    is isolated from other developers'. Key-valued *properties* (relations) are
+    rewritten too — recursively through lists and embedded entities — onto the
+    target partition (`database=viur-tests`, `namespace=<target>`). This is
+    **mandatory**, not optional: a copied entity in `viur-tests` may not
+    reference keys in the source `(default)` database, so Datastore rejects a
+    verbatim copy. As a side effect, relations resolve **within** your copied
+    slice. Re-run the script to refresh your slice.
 
 !!! warning "Reads live production · data protection"
     Seeding reads the live database (read-only). That is a conscious
@@ -46,8 +56,18 @@ What it does:
     structurally impossible, but copying live data into a test slice can pull
     in personal data — review/extend `--exclude` for PII before running.
 
-Requirements: `gcloud` authenticated, a GCS bucket, and Datastore
-import/export IAM (e.g. `roles/datastore.importExportAdmin`).
+!!! note "Why not `gcloud` export/import?"
+    The managed `gcloud datastore`/`firestore` export/import **cannot remap
+    namespaces** — `--namespace-ids` / `--namespaces` is a *filter* on which
+    source namespaces to include, never a destination. Imported entities are
+    restored into the namespace they were exported from. A per-developer
+    target namespace is therefore only reachable via a direct client copy (the
+    "custom migration solution" the Google docs point to).
+
+Requirements: an explicit `--project` (required — never inferred, since this
+reads live data), application-default credentials
+(`gcloud auth application-default login`), IAM to read `(default)` and write
+`viur-tests`, and the `viur-tests` named database must already exist.
 
 ## 2. Tokenless browsing — at boot
 
@@ -63,15 +83,16 @@ import modules, render
 app = core_setup(modules, render)
 ```
 
-Then boot with the opt-in env var:
+Then boot with the opt-in env vars, pointing the server at **your**
+namespace (the one you copied into):
 
 ```sh
-VIUR_TESTING_ENABLE=1 VIUR_TESTING_TOKENLESS=1 viur run develop
+VIUR_TESTING_ENABLE=1 VIUR_TESTING_NAMESPACE=ak VIUR_TESTING_TOKENLESS=1 viur run develop
 ```
 
 Before the real server boots, a fresh PIN gates arming tokenless browsing
 for this dev server. Once armed, requests may skip the
-`X-Viur-Test-Token` header — so you can just open the app against the
+`X-Viur-Test-Token` header — so you can just open the app against your
 seeded slice.
 
 It is gated, per request, by:
@@ -82,21 +103,24 @@ It is gated, per request, by:
 | `conf.instance.is_dev_server` | never opens a deployed instance |
 | armed this boot (PIN-confirmed) | a human enabled it deliberately |
 
-Tokenless only ever exposes the `viur-tests` slice — never `(default)`.
-Since the seed lands in the default namespace, tokenless does **not**
-require a per-developer namespace. The Playwright runner is unaffected:
-its fixtures still inject the token and `/_test/config/status` still issues
-one, so e2e runs unchanged; you simply gain manual browsing on top.
+Tokenless only ever exposes the `viur-tests` slice — never `(default)`. The
+Playwright runner is unaffected: its fixtures still inject the token and
+`/_test/config/status` still issues one, so e2e runs unchanged; you simply
+gain manual browsing on top.
 
-!!! note "Boot without a namespace"
-    With managed seeding the data is in `viur-tests`' **default** namespace,
-    so boot **without** `VIUR_TESTING_NAMESPACE` — a namespace would point
-    the server at an empty slice.
+!!! warning "Boot with the namespace you copied into"
+    `viur-mirror --target-namespace ak` lands the data in `viur-tests` /
+    `ns=ak`. The server must boot with the **same** namespace
+    (`VIUR_TESTING_NAMESPACE=ak`) or it points at an empty slice. `activate()`
+    aligns the datastore client **and** the viur-core `Key` factory to that
+    database + namespace, so reads and writes stay in your slice.
 
 ## Non-negotiables
 
-- **No TTY → hard abort** (both the seed script and tokenless arming). Do
-  not set `VIUR_TESTING_TOKENLESS` in CI.
+- **No TTY → hard abort** (both the copy and tokenless arming). Do not set
+  `VIUR_TESTING_TOKENLESS` in CI.
 - **Wrong PIN → abort.** No retry; re-run for a fresh PIN.
-- **Shared slice.** A tokenless stray request could mutate the shared
-  `viur-tests` data — re-seed via the script to restore it.
+- **Never into `(default)`.** `--target-database` may never be the live
+  database — a hard guard with no override.
+- **Tokenless can write.** A tokenless stray request could mutate your
+  `viur-tests` namespace — re-run `viur-mirror` to restore it.

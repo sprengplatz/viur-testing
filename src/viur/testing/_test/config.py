@@ -138,8 +138,9 @@ class ConfigModule(Module):
         :class:`~viur.testing.validator.TokenValidator` additionally requires
         ``conf.instance.is_dev_server`` per request.
 
-        Note: the managed seed lands in ``viur-tests``' default namespace, so
-        this mode does not require (or assume) a per-developer namespace.
+        Note: the ``viur-mirror`` copy lands in a per-developer **namespace**
+        of ``viur-tests``. For the developer to see their slice, the dev-server
+        process must be wired to that same database **and** namespace.
         """
         return (
             cls._tokenless_armed

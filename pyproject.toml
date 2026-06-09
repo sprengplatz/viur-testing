@@ -26,6 +26,9 @@ dependencies = [
     "viur-core>=3.7,<4",
 ]
 
+[project.scripts]
+viur-mirror = "viur.testing.cli:run"
+
 [project.optional-dependencies]
 test = [
     "pytest~=8.0",

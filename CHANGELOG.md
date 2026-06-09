@@ -12,13 +12,15 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - **Dev-Mirror mode** (Python side) — removes the "my `viur-tests`
   slice is empty, so I run a second server against the live data"
   friction. Two parts:
-  - **Managed seeding** — `scripts/dev_mirror_import.py` copies the live
-    `(default)` database into the `viur-tests` database using
-    `gcloud firestore export`/`import` (the managed path that supports
-    *named* databases). Reads `(default)` through a **read-only** client
+  - **Per-namespace seeding** — the `viur-mirror` console script copies the
+    live `(default)` database into a developer-chosen **namespace** of the
+    `viur-tests` database, via the regular `datastore` client (`database=` +
+    `namespace=`). Reads `(default)` through a **read-only** client
     (`mirror.ReadOnlyClient`) and excludes viur-core secret/system kinds
-    (`viur-conf` incl. hmacKey, `viur-session`) **at export**, so secrets
-    never reach the GCS bucket. PIN-gated.
+    (`viur-conf` incl. hmacKey, `viur-session`, `viur-securitykey`,
+    `viur-relations`, `file`/`file_rootNode`/`viur-blob-locks`), so secrets
+    never reach the test slice. PIN-gated. Writing into `(default)` is a hard
+    guard with no override.
   - **Tokenless browsing** — set `VIUR_TESTING_TOKENLESS=1` and, before
     the real server boots, a fresh 6-digit PIN arms tokenless browsing
     for a whitelisted dev server. Requests may then skip the
@@ -34,10 +36,16 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Note
 
-- Managed import preserves keys **1:1**, so relations stay intact without
-  re-keying — but it cannot remap namespaces. The seed therefore lands in
-  `viur-tests`' **default namespace**: every developer shares one slice
-  (**no per-developer namespace isolation** in this mode).
+- Keys are remapped onto the target partition: each entity's own key **and**
+  every key-valued property (relations), recursively through lists and embedded
+  entities, are rewritten to `database=viur-tests` / `namespace=<target>`. This
+  is mandatory — a copied entity may not reference keys in the source
+  `(default)` database, so Datastore rejects a verbatim copy; as a side effect
+  relations resolve within the copied slice. (The managed `gcloud`
+  export/import cannot remap namespaces at all — `--namespace-ids` is a filter,
+  not a destination — so a direct client copy is the only way to reach a
+  per-developer namespace.) Boot the dev server with
+  `VIUR_TESTING_NAMESPACE=<your-ns>` to read your slice.
 - Seeding deliberately **reads the live `(default)` database** (read-only).
   That is a conscious, documented relaxation of the "never reads
   production" half of the guarantee. Copying live data into a test slice

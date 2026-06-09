@@ -1,17 +1,17 @@
 """
 Dev-Mirror — tokenless browsing for the seeded test slice.
 
-The actual seeding is done **out-of-band** by ``scripts/dev_mirror_import.py``
-(managed ``gcloud firestore export``/``import``: ``(default)`` → ``viur-tests``,
-default namespace, keys preserved 1:1). Managed import cannot remap namespaces,
-so the test slice is the **shared default namespace** of ``viur-tests`` — there
-is no per-developer namespace isolation in this mode (a deliberate trade-off).
+The actual seeding is done **out-of-band** by the ``viur-mirror`` console
+script (:mod:`viur.testing.cli`): a direct, entity-by-entity copy from the live
+``(default)`` database into a developer-chosen **namespace** of the
+``viur-tests`` database. Each developer copies into their own namespace, so the
+slices are isolated (no shared default namespace).
 
 This module provides the two pieces that live in the package:
 
-- :class:`ReadOnlyClient` — the read-only wrapper the seed script uses on the
-  live ``(default)`` database (for the ``__kind__`` enumeration), so an
-  export-side bug can never write to production.
+- :class:`ReadOnlyClient` — the read-only wrapper the copy uses on the live
+  ``(default)`` database (for the ``__kind__`` enumeration and the reads), so a
+  copy-side bug can never write to production.
 - :func:`arm_tokenless_browsing` — boot-time, PIN-gated arming of tokenless
   browsing: on a whitelisted dev server, requests may then skip the
   ``X-Viur-Test-Token`` header so the developer can open the seeded slice in a
@@ -46,7 +46,7 @@ _BLOCKED_WRITES: frozenset[str] = frozenset({
 class ReadOnlyClient:
     """Wrap a datastore client so reads pass through but any write raises.
 
-    Used by the managed seed script on the live ``(default)`` database: the
+    Used by the ``viur-mirror`` copy on the live ``(default)`` database: the
     source can be queried and fetched, never mutated. A bug that tried to
     write to production fails loudly instead of corrupting live data.
     """
@@ -120,7 +120,7 @@ def arm_tokenless_browsing(
         context_lines=[
             f"project = {project_id}",
             "enables TOKENLESS browsing of the viur-tests slice (no token header).",
-            "the slice is a SHARED copy seeded out-of-band (scripts/dev_mirror_import.py).",
+            "the slice is a SHARED copy seeded out-of-band (viur-mirror).",
         ],
         io=io,
         _pin=_pin,
