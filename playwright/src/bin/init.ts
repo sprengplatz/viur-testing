@@ -7,7 +7,7 @@
  * Two scaffold modes:
  *
  *   - **test** (default): backend is a local dev server with
- *     ``VIUR_TESTING_ENABLE=1``. Scaffolds a Vite-proxy config so
+ *     ``VIUR_TESTING=test``. Scaffolds a Vite-proxy config so
  *     the dev server is a transparent test-mode adapter, plus an
  *     example spec that consumes the ``serverStatus`` fixture.
  *
@@ -247,7 +247,7 @@ VITE_API_URL="http://localhost:8081"
 
   "tests/example.spec.ts": `/**
  * example.spec.ts — minimal smoke test to verify the scaffolding works
- * in TEST MODE (backend armed with VIUR_TESTING_ENABLE=1).
+ * in TEST MODE (backend armed with VIUR_TESTING=test).
  *
  * Delete this file once you have a real test suite.
  */
@@ -394,7 +394,7 @@ async function promptForMode(io: InitPromptIo): Promise<ScaffoldMode> {
   io.writeLine("Which scaffold do you want?")
   io.writeLine("")
   io.writeLine("  [1] Test Mode  (default)")
-  io.writeLine("      Backend is a local dev server with VIUR_TESTING_ENABLE=1.")
+  io.writeLine("      Backend is a local dev server with VIUR_TESTING=test.")
   io.writeLine("      Scaffolds Vite proxy + token-aware fixtures.")
   io.writeLine("")
   io.writeLine("  [2] Guarded Mode")
@@ -507,7 +507,7 @@ export async function initProject(opts: InitOptions = {}): Promise<void> {
     if (mode === "test") {
       console.log("  1. Adjust the TODO markers in `vite.e2e.config.ts`.")
       console.log("  2. Run `npm install`.")
-      console.log("  3. Boot your backend with `VIUR_TESTING_ENABLE=1 viur run`.")
+      console.log("  3. Boot your backend with `VIUR_TESTING=test viur run`.")
       console.log("  4. `npm test`.")
     } else {
       console.log("  1. Set E2E_BACKEND_URL to your deployed backend's origin.")

@@ -41,7 +41,7 @@ export interface RequireTestModeOptions {
    * `null` (or the empty string `""`) to assert the server is on the
    * default namespace, or omit the field to skip the namespace check
    * entirely. The empty-string normalisation mirrors the server-side
-   * convention from `VIUR_TESTING_NAMESPACE` so callers can pass
+   * convention from the `VIUR_TESTING` namespace part so callers can pass
    * `process.env.E2E_TEST_NAMESPACE` straight through.
    */
   expectedNamespace?: string | null
@@ -142,7 +142,7 @@ export async function probeStatusEndpoint(
     // Use `in` (not truthiness) so callers can pass `null` to assert
     // the server is on the default namespace. Empty string is
     // normalised to null up-front — matches the server-side convention
-    // from VIUR_TESTING_NAMESPACE.
+    // from the VIUR_TESTING namespace part.
     if ("expectedNamespace" in opts) {
       const expected = opts.expectedNamespace === "" ? null : opts.expectedNamespace
       if (status.namespace !== expected) {
@@ -203,7 +203,7 @@ export async function requireTestMode(opts: RequireTestModeOptions): Promise<Ser
     throw new Error(
       `viur-testing preflight failed: POST /json/_test/config/status returned ` +
         `a 4xx — the backend at ${opts.backendUrl} is not in test mode. ` +
-        `Is the backend running with VIUR_TESTING_ENABLE=1 and is viur-testing ` +
+        `Is the backend running with VIUR_TESTING=test and is viur-testing ` +
         `wired into main.py?`,
     )
   }

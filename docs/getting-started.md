@@ -49,8 +49,8 @@ app = core_setup(modules, render)
 
 `setup()` does, in order:
 
-1. Reads `os.environ["VIUR_TESTING_ENABLE"]`.
-2. If truthy, calls [`activate(database="viur-tests")`][viur.testing.activation.activate]
+1. Reads `os.environ["VIUR_TESTING"]` (`<mode>[:<namespace>]`).
+2. For `test` or `dev` mode, calls [`activate(database="viur-tests")`][viur.testing.activation.activate]
    which:
     - verifies `viur.core.db.transport` has not been imported yet,
     - verifies `conf.instance.is_dev_server`,
@@ -85,7 +85,7 @@ picks it up and routes `/_test/config/status` + `/_test/config/finish`.
 ## 5. Run the dev server in test mode
 
 ```bash
-VIUR_TESTING_ENABLE=1 viur run develop
+VIUR_TESTING=test viur run develop
 ```
 
 On first boot you should see in the log:
@@ -170,7 +170,7 @@ the canonical e2e wiring goes through the npm package.
 
 Leave both wiring calls in place. In a cloud deployment:
 
-- `VIUR_TESTING_ENABLE` is unset → `setup()` skips `activate()` and
+- `VIUR_TESTING` is unset (or `off`) → `setup()` skips `activate()` and
   only installs the production header guard.
 - `register_modules()` checks `ConfigModule.is_active()` and is a
   no-op → the `/_test/*` routes never mount.

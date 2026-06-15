@@ -17,7 +17,7 @@ if (args.includes("-h") || args.includes("--help")) {
   console.log("")
   console.log("Modes:")
   console.log("  test     Backend is a local dev server armed with")
-  console.log("           VIUR_TESTING_ENABLE=1. Scaffolds Vite proxy +")
+  console.log("           VIUR_TESTING=test. Scaffolds Vite proxy +")
   console.log("           token-aware fixtures.")
   console.log("  guarded  Backend is an already-deployed instance. Scaffolds")
   console.log("           a slim setup; specs that need _test infrastructure")

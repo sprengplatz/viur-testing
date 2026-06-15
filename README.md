@@ -96,10 +96,11 @@ import render
 core_setup(modules, render)
 ```
 
-`viur.testing.setup()` checks the `VIUR_TESTING_ENABLE` env var; if
-truthy it calls `activate()` (datastore client swap + key-factory
-patch + closed-system whitelist + state priming + validator install)
-and always installs the production header guard via `protect()`.
+`viur.testing.setup()` reads the `VIUR_TESTING` env var
+(`<mode>[:<namespace>]`); for `test` or `dev` mode it calls `activate()`
+(datastore client swap + key-factory patch + closed-system whitelist +
+state priming + validator install) and always installs the production
+header guard via `protect()`.
 
 In `modules/__init__.py` register the test endpoints — idempotent and
 safe to leave in place for production deployments (no-op when test
@@ -123,24 +124,27 @@ you can call yourself: `viur.testing.activate(database=...)`,
 
 ## Running the dev server with test mode
 
-Toggle test mode at boot by setting the env var that `setup()` reads:
+Toggle test mode at boot by setting the env var that `setup()` reads.
+The value is `<mode>[:<namespace>]` — `test` (or `1`/`true`/`on`),
+`test:<ns>`, or `dev:<ns>`; unset / `0` / `off` means off:
 
 ```sh
-VIUR_TESTING_ENABLE=1 viur run
+VIUR_TESTING=test viur run
 ```
 
-Without the env var, `setup()` skips `activate()` and the process boots
-against the default database as if the package were not installed.
+Without the env var (or with `off`), `setup()` skips `activate()` and
+the process boots against the default database as if the package were
+not installed.
 
 When test mode is active, the dev-server boot banner gains two extra
 lines — `database = …` and `namespace = …` — so the running slice is
 visible at a glance. The namespace line is rendered unconditionally;
-without `VIUR_TESTING_NAMESPACE` it falls back to `(default)`, making
-it obvious that test mode is armed but namespace isolation is **not**
-in effect:
+without a namespace in `VIUR_TESTING` it falls back to `(default)`,
+making it obvious that test mode is armed but namespace isolation is
+**not** in effect:
 
 ```
-# With VIUR_TESTING_NAMESPACE=alice
+# With VIUR_TESTING=test:alice
 ################## LOCAL DEVELOPMENT SERVER IS UP AND RUNNING ##################
 #                          project = my-viur-project                           #
 #                               python = 3.13.0                                #
@@ -149,7 +153,7 @@ in effect:
 #                              namespace = alice                               #
 ################################################################################
 
-# Without VIUR_TESTING_NAMESPACE (or with empty value)
+# With VIUR_TESTING=test (no namespace)
 ################## LOCAL DEVELOPMENT SERVER IS UP AND RUNNING ##################
 #                          project = my-viur-project                           #
 #                               python = 3.13.0                                #
@@ -176,13 +180,13 @@ Boot each dev server with its own namespace:
 
 ```sh
 # Alice's machine
-VIUR_TESTING_ENABLE=1 VIUR_TESTING_NAMESPACE=alice viur run
+VIUR_TESTING=test:alice viur run
 
 # Bob's machine
-VIUR_TESTING_ENABLE=1 VIUR_TESTING_NAMESPACE=bob viur run
+VIUR_TESTING=test:bob viur run
 
 # CI for PR #42
-VIUR_TESTING_ENABLE=1 VIUR_TESTING_NAMESPACE=ci-pr-42 viur run
+VIUR_TESTING=test:ci-pr-42 viur run
 ```
 
 The runner-side `require_test_mode` can assert the expected namespace
@@ -195,9 +199,10 @@ to fail fast when somebody points at the wrong slice::
         expected_namespace="alice",  # omit to skip; pass None for default
     )
 
-`VIUR_TESTING_NAMESPACE` may be empty or unset — both mean "no
-namespace, use the Datastore default". This is the existing behaviour
-when no namespaces are needed (e.g. single-developer setup).
+The namespace part of `VIUR_TESTING` may be omitted (`VIUR_TESTING=test`)
+— that means "no namespace, use the Datastore default". This is the
+existing behaviour when no namespaces are needed (e.g. single-developer
+setup).
 
 ## Guarded Mode (Playwright only, since `@spltz/viur-testing` 0.3.0)
 
@@ -231,7 +236,7 @@ npx viur-testing-init
 ```
 
 The CLI asks interactively for the scaffold mode (Test Mode for a
-local dev server armed with `VIUR_TESTING_ENABLE=1`, Guarded Mode
+local dev server armed with `VIUR_TESTING=test`, Guarded Mode
 for tests against an already-deployed instance) and drops a working
 `package.json`, `tsconfig.json`, `playwright.config.ts`,
 `vite.e2e.config.ts`, `.env.e2e`, `.gitignore` and an example spec.

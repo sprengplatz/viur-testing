@@ -7,6 +7,25 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### Changed
+
+- **BREAKING — single boot env var.** The three server-side boot
+  variables `VIUR_TESTING_ENABLE`, `VIUR_TESTING_NAMESPACE` and
+  `VIUR_TESTING_TOKENLESS` are replaced by one
+  `VIUR_TESTING=<mode>[:<namespace>]` (`mode` = `test` or `dev`;
+  `1`/`true`/`on` alias `test`; unset/`0`/`off`/`false` = off).
+  `dev` mode (= test mode + tokenless browsing) now **requires** a
+  namespace. Migration:
+
+      VIUR_TESTING_ENABLE=1                                   → VIUR_TESTING=1   (or =test)
+      VIUR_TESTING_ENABLE=1 VIUR_TESTING_NAMESPACE=ak         → VIUR_TESTING=test:ak
+      VIUR_TESTING_ENABLE=1 VIUR_TESTING_NAMESPACE=ak \
+        VIUR_TESTING_TOKENLESS=1                              → VIUR_TESTING=dev:ak
+
+  `setup()` drops `enable_env_var`, `namespace_env_var` and
+  `tokenless_env_var`; it gains `env_var` (default `VIUR_TESTING`) plus
+  explicit `mode`/`namespace` overrides.
+
 ### Added
 
 - **Dev-Mirror mode** (Python side) — removes the "my `viur-tests`
@@ -21,9 +40,9 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
     `viur-relations`, `file`/`file_rootNode`/`viur-blob-locks`), so secrets
     never reach the test slice. PIN-gated. Writing into `(default)` is a hard
     guard with no override.
-  - **Tokenless browsing** — set `VIUR_TESTING_TOKENLESS=1` and, before
-    the real server boots, a fresh 6-digit PIN arms tokenless browsing
-    for a whitelisted dev server. Requests may then skip the
+  - **Tokenless browsing** — boot in **dev mode** (`VIUR_TESTING=dev:<ns>`)
+    and, before the real server boots, a fresh 6-digit PIN arms tokenless
+    browsing for a whitelisted dev server. Requests may then skip the
     `X-Viur-Test-Token` header (`ConfigModule.tokenless_allowed()` +
     `is_dev_server`, re-checked per request) — only ever opening the
     `viur-tests` slice, never `(default)`.
@@ -32,7 +51,8 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
     persisted ACK, **no TTY → hard abort** (do not set the env var / run
     the script in CI).
   - New public surface: `viur.testing.arm_tokenless_browsing(...)`; new
-    `setup()` params `tokenless_app_ids`, `tokenless_env_var`.
+    `setup()` param `tokenless_app_ids`. Dev mode is selected via the
+    single `VIUR_TESTING=dev:<ns>` env var (see **Changed** below).
 
 ### Note
 
@@ -45,7 +65,7 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   export/import cannot remap namespaces at all — `--namespace-ids` is a filter,
   not a destination — so a direct client copy is the only way to reach a
   per-developer namespace.) Boot the dev server with
-  `VIUR_TESTING_NAMESPACE=<your-ns>` to read your slice.
+  `VIUR_TESTING=dev:<your-ns>` to read your slice.
 - Seeding deliberately **reads the live `(default)` database** (read-only).
   That is a conscious, documented relaxation of the "never reads
   production" half of the guarantee. Copying live data into a test slice

@@ -90,7 +90,7 @@ async function refreshToken(backendUrl: string): Promise<void> {
     if (!resp.ok) {
       console.warn(
         `[viur-testing] could not (re)fetch token: ${resp.status} ${resp.statusText} — ` +
-          `is the backend running with VIUR_TESTING_ENABLE=1? Proxy will keep ` +
+          `is the backend running with VIUR_TESTING=test? Proxy will keep ` +
           `using the previously cached token (if any).`,
       )
       return

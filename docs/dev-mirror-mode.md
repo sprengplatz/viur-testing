@@ -83,11 +83,12 @@ import modules, render
 app = core_setup(modules, render)
 ```
 
-Then boot with the opt-in env vars, pointing the server at **your**
-namespace (the one you copied into):
+Then boot in **dev mode**, pointing the server at **your** namespace
+(the one you copied into). Dev mode (`VIUR_TESTING=dev:<ns>`) is test
+mode plus tokenless browsing:
 
 ```sh
-VIUR_TESTING_ENABLE=1 VIUR_TESTING_NAMESPACE=ak VIUR_TESTING_TOKENLESS=1 viur run develop
+VIUR_TESTING=dev:ak viur run develop
 ```
 
 Before the real server boots, a fresh PIN gates arming tokenless browsing
@@ -111,14 +112,14 @@ gain manual browsing on top.
 !!! warning "Boot with the namespace you copied into"
     `viur-mirror --target-namespace ak` lands the data in `viur-tests` /
     `ns=ak`. The server must boot with the **same** namespace
-    (`VIUR_TESTING_NAMESPACE=ak`) or it points at an empty slice. `activate()`
+    (`VIUR_TESTING=dev:ak`) or it points at an empty slice. `activate()`
     aligns the datastore client **and** the viur-core `Key` factory to that
     database + namespace, so reads and writes stay in your slice.
 
 ## Non-negotiables
 
-- **No TTY → hard abort** (both the copy and tokenless arming). Do not set
-  `VIUR_TESTING_TOKENLESS` in CI.
+- **No TTY → hard abort** (both the copy and tokenless arming). Do not use
+  `dev` mode (`VIUR_TESTING=dev:<ns>`) in CI.
 - **Wrong PIN → abort.** No retry; re-run for a fresh PIN.
 - **Never into `(default)`.** `--target-database` may never be the live
   database — a hard guard with no override.
