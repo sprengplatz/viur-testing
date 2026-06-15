@@ -58,7 +58,8 @@ those classes. Import them from their concrete submodules, and only
 import os as _os
 
 from .activation import activate
-from .constants import DEFAULT_DATABASE, TOKEN_HEADER, TOKENLESS_ENV_VAR
+from .constants import DEFAULT_DATABASE, TOKEN_HEADER
+from .mode import MODE_DEV, MODE_OFF, MODE_TEST, parse_spec, validate_spec
 from .mirror import arm_tokenless_browsing
 from .protection import protect
 from .runner import ServerStatus, TestModePreflightError, finish, require_test_mode
@@ -151,35 +152,39 @@ def register_test_submodule(name: str, module_cls: type) -> None:
 
 def setup(
     *,
-    enable_env_var: str = "VIUR_TESTING_ENABLE",
-    database: str = DEFAULT_DATABASE,
+    env_var: str = "VIUR_TESTING",
+    mode: str | None = None,
     namespace: str | None = None,
-    namespace_env_var: str = "VIUR_TESTING_NAMESPACE",
+    database: str = DEFAULT_DATABASE,
     api_dir: str | None = "testing",
     tokenless_app_ids: list[str] | None = None,
-    tokenless_env_var: str = TOKENLESS_ENV_VAR,
 ) -> None:
     """One-call host-side wiring for ``main.py``.
 
     Must be the **first** line of code in ``main.py`` — before any
     ``from viur.core ...`` import. Internally:
 
-    1. Reads ``os.environ[enable_env_var]`` (default
-       ``VIUR_TESTING_ENABLE``). If truthy, calls :func:`activate`
-       which swaps the datastore client to ``database`` (default
-       ``viur-tests``) and the optional ``namespace``, runs the probe
-       and installs the request validator.
-    2. Calls :func:`protect` unconditionally to install the
-       production header guard.
+    1. Resolves the mode + namespace. If ``mode`` and ``namespace`` are
+       both ``None`` (the usual case), parses ``os.environ[env_var]``
+       (default ``VIUR_TESTING``) via :func:`viur.testing.mode.parse_spec`.
+       Otherwise the explicit kwargs win and the env var is ignored.
+    2. For ``test`` / ``dev`` mode, calls :func:`activate` (datastore
+       client swap to ``database`` + ``namespace``, probe, validator).
+    3. For ``dev`` mode additionally calls :func:`arm_tokenless_browsing`
+       (PIN-gated tokenless browsing of the seeded slice).
+    4. Calls :func:`protect` unconditionally to install the production
+       header guard.
 
-    Namespace resolution: if ``namespace`` is not given to this call,
-    ``os.environ[namespace_env_var]`` is consulted. An empty string is
-    treated as "no namespace" — the host can clear an inherited env
-    var by exporting ``VIUR_TESTING_NAMESPACE=``. This makes it easy
-    to give different testers their own slice of the same
-    ``viur-tests`` database without changing ``main.py``::
+    The single env var replaces the former trio
+    (``VIUR_TESTING_ENABLE`` / ``_NAMESPACE`` / ``_TOKENLESS``)::
 
-        $ VIUR_TESTING_ENABLE=1 VIUR_TESTING_NAMESPACE=ak viur run
+        $ VIUR_TESTING=test          # test mode, default namespace
+        $ VIUR_TESTING=test:ak       # test mode, namespace ak
+        $ VIUR_TESTING=dev:ak        # dev mode (test + tokenless), namespace ak
+
+    ``1`` / ``true`` / ``on`` are accepted as aliases for ``test``;
+    unset / ``""`` / ``0`` / ``off`` / ``false`` mean off. ``dev``
+    requires a namespace. See :func:`viur.testing.mode.parse_spec`.
 
     Use the env var, **not** ``conf.instance.is_dev_server``, as the
     gate — reading ``conf.instance`` triggers the full ``viur.core``
@@ -196,15 +201,16 @@ def setup(
         import modules, render
         app = core_setup(modules, render)
 
-    :param enable_env_var: Name of the env var that gates
-        :func:`activate`. Default ``VIUR_TESTING_ENABLE``.
+    :param env_var: Name of the single variable to read. Default
+        ``VIUR_TESTING``.
+    :param mode: Explicit mode override (``"test"``/``"dev"``/``"off"``).
+        When given (or ``namespace`` is given), the env var is not read.
+    :param namespace: Explicit Datastore namespace override. An empty
+        string is normalised to ``None`` (default slice). When several
+        testers share one ``viur-tests`` database, giving each their own
+        namespace keeps their entities from colliding.
     :param database: Name of the test database to swap to. Default
         ``viur-tests``.
-    :param namespace: Optional Datastore namespace. When ``None``, the
-        env var named in ``namespace_env_var`` is consulted as
-        fallback.
-    :param namespace_env_var: Name of the env var to read when
-        ``namespace`` is not given. Default ``VIUR_TESTING_NAMESPACE``.
     :param api_dir: Name of the wrapper directory (relative to the
         caller's parent dir) that contains an ``api/`` subfolder
         with the project test API package. ``setup()`` loads
@@ -225,24 +231,29 @@ def setup(
         ``404 /_test/<spec>/setup`` errors from the runner side).
     :param tokenless_app_ids: Whitelist of GCP project ids allowed to enable
         **tokenless browsing** of the ``viur-tests`` slice (skip the
-        ``X-Viur-Test-Token`` header). Kept here, in ``main.py``, so it is
-        reviewed in PRs rather than drifting in a dotfile. ``None``/empty
-        disables tokenless regardless of the env var.
-    :param tokenless_env_var: Name of the env var that opts a boot into
-        tokenless browsing. Default :data:`VIUR_TESTING_TOKENLESS`. When set
-        (and test mode is armed), :func:`arm_tokenless_browsing` runs after
-        :func:`activate` and before the real server boots: a fresh PIN, then
-        tokenless armed. No TTY → hard abort, so do not set this in CI.
+        ``X-Viur-Test-Token`` header) in ``dev`` mode. Kept here, in
+        ``main.py``, so it is reviewed in PRs rather than drifting in a
+        dotfile. ``None``/empty disables tokenless even in dev mode
+        (:func:`arm_tokenless_browsing` then refuses).
 
         Seeding the ``viur-tests`` slice with live data is a separate,
         out-of-band step — see the ``viur-mirror`` console script
         (:mod:`viur.testing.cli`; direct namespace copy from ``(default)``).
+    :raises ValueError: on an unparseable / illegal ``VIUR_TESTING``
+        value (unknown mode, dev without namespace, …) — aborts the boot.
     """
-    if _os.environ.get(enable_env_var):
-        if namespace is None:
-            namespace = _os.environ.get(namespace_env_var) or None
+    if mode is None and namespace is None:
+        mode, namespace = parse_spec(_os.environ.get(env_var))
+    else:
+        if mode is None:
+            mode = MODE_TEST
+        if namespace == "":
+            namespace = None
+        validate_spec(mode, namespace)
+
+    if mode != MODE_OFF:
         activate(database=database, namespace=namespace)
-        if _os.environ.get(tokenless_env_var):
+        if mode == MODE_DEV:
             arm_tokenless_browsing(tokenless_app_ids=tokenless_app_ids)
         if api_dir is not None:
             _load_project_api(api_dir)

@@ -45,17 +45,6 @@ is one of these values and ``<renderer>`` is a single optional segment
 is treated as a regular request and requires the token.
 """
 
-TOKENLESS_ENV_VAR = "VIUR_TESTING_TOKENLESS"
-"""Env var that opts a dev-server boot into **tokenless browsing**.
-
-When set (and test mode is armed), :func:`viur.testing.mirror.arm_tokenless_browsing`
-runs *before* the real server boots: behind a fresh 6-digit PIN it arms
-tokenless browsing for the (whitelisted) dev server, so requests may then skip
-the ``X-Viur-Test-Token`` header. No TTY → hard abort, so this must **not** be
-set in CI. Seeding the ``viur-tests`` slice is done separately by the
-``viur-mirror`` console script (:mod:`viur.testing.cli`).
-"""
-
 MIRROR_EXCLUDE_KINDS: frozenset[str] = frozenset({
     "viur-conf",
     "viur-session",

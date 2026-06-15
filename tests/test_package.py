@@ -254,13 +254,13 @@ def test_load_project_api_raises_when_no_host_frame(monkeypatch):
 
 
 def test_setup_skips_api_loading_when_test_mode_off(monkeypatch, tmp_path):
-    """Without the gate env var, `api_dir` is ignored entirely — even
+    """Without test mode, `api_dir` is ignored entirely — even
     a valid wrapper is left untouched."""
     api_pkg = tmp_path / "testing" / "api"
     api_pkg.mkdir(parents=True)
     (api_pkg / "__init__.py").write_text("MARKER = 'should-not-load'\n")
 
-    monkeypatch.delenv("VIUR_TESTING_ENABLE", raising=False)
+    monkeypatch.delenv("VIUR_TESTING", raising=False)
     monkeypatch.setattr(viur.testing, "protect", lambda: None)
 
     import sys
@@ -271,8 +271,7 @@ def test_setup_skips_api_loading_when_test_mode_off(monkeypatch, tmp_path):
 
 def test_setup_skips_api_loading_when_api_dir_is_none(monkeypatch):
     """`api_dir=None` is the explicit opt-out: never touch sys.modules['api']."""
-    monkeypatch.setenv("VIUR_TESTING_ENABLE", "1")
-    monkeypatch.delenv("VIUR_TESTING_NAMESPACE", raising=False)
+    monkeypatch.setenv("VIUR_TESTING", "test")
     monkeypatch.setattr(viur.testing, "activate", lambda **kw: None)
     monkeypatch.setattr(viur.testing, "protect", lambda: None)
 
@@ -297,54 +296,63 @@ def test_heavy_classes_not_on_top_level():
 # ---------------------------------------------------------------------------
 
 
-def test_setup_calls_activate_when_env_var_truthy(monkeypatch):
-    """When the gate env var is set, setup() must invoke activate()
-    with the configured database, then protect()."""
+def test_setup_calls_activate_when_mode_test(monkeypatch):
+    """VIUR_TESTING=test → activate() with default db/ns, then protect()."""
     calls: list = []
-    monkeypatch.setenv("VIUR_TESTING_ENABLE", "1")
-    monkeypatch.delenv("VIUR_TESTING_NAMESPACE", raising=False)
+    monkeypatch.setenv("VIUR_TESTING", "test")
     monkeypatch.setattr(
         viur.testing, "activate", lambda **kw: calls.append(("activate", kw))
     )
     monkeypatch.setattr(viur.testing, "protect", lambda: calls.append(("protect",)))
-    viur.testing.setup()
+    viur.testing.setup(api_dir=None)
     assert calls == [
         ("activate", {"database": "viur-tests", "namespace": None}),
         ("protect",),
     ]
 
 
-def test_setup_skips_activate_when_env_var_unset(monkeypatch):
+def test_setup_accepts_numeric_alias(monkeypatch):
+    """VIUR_TESTING=1 is an alias for test mode."""
     calls: list = []
-    monkeypatch.delenv("VIUR_TESTING_ENABLE", raising=False)
+    monkeypatch.setenv("VIUR_TESTING", "1")
     monkeypatch.setattr(
         viur.testing, "activate", lambda **kw: calls.append(("activate", kw))
     )
     monkeypatch.setattr(viur.testing, "protect", lambda: calls.append(("protect",)))
-    viur.testing.setup()
+    viur.testing.setup(api_dir=None)
+    assert calls[0] == ("activate", {"database": "viur-tests", "namespace": None})
+
+
+def test_setup_skips_activate_when_off(monkeypatch):
+    calls: list = []
+    monkeypatch.delenv("VIUR_TESTING", raising=False)
+    monkeypatch.setattr(
+        viur.testing, "activate", lambda **kw: calls.append(("activate", kw))
+    )
+    monkeypatch.setattr(viur.testing, "protect", lambda: calls.append(("protect",)))
+    viur.testing.setup(api_dir=None)
     assert calls == [("protect",)]
 
 
-def test_setup_skips_activate_when_env_var_empty_string(monkeypatch):
+def test_setup_skips_activate_when_empty_string(monkeypatch):
     calls: list = []
-    monkeypatch.setenv("VIUR_TESTING_ENABLE", "")
+    monkeypatch.setenv("VIUR_TESTING", "")
     monkeypatch.setattr(
         viur.testing, "activate", lambda **kw: calls.append(("activate", kw))
     )
     monkeypatch.setattr(viur.testing, "protect", lambda: calls.append(("protect",)))
-    viur.testing.setup()
+    viur.testing.setup(api_dir=None)
     assert calls == [("protect",)]
 
 
 def test_setup_honours_custom_env_var_and_database(monkeypatch):
     calls: list = []
-    monkeypatch.setenv("MY_TEST_FLAG", "yes")
-    monkeypatch.delenv("VIUR_TESTING_NAMESPACE", raising=False)
+    monkeypatch.setenv("MY_TEST_FLAG", "test")
     monkeypatch.setattr(
         viur.testing, "activate", lambda **kw: calls.append(("activate", kw))
     )
     monkeypatch.setattr(viur.testing, "protect", lambda: calls.append(("protect",)))
-    viur.testing.setup(enable_env_var="MY_TEST_FLAG", database="alt-tests")
+    viur.testing.setup(env_var="MY_TEST_FLAG", database="alt-tests", api_dir=None)
     assert calls == [
         ("activate", {"database": "alt-tests", "namespace": None}),
         ("protect",),
@@ -352,83 +360,77 @@ def test_setup_honours_custom_env_var_and_database(monkeypatch):
 
 
 def test_setup_reads_namespace_from_env_var(monkeypatch):
-    """``VIUR_TESTING_NAMESPACE`` env var feeds into activate()."""
+    """VIUR_TESTING=test:alice feeds the namespace into activate()."""
     calls: list = []
-    monkeypatch.setenv("VIUR_TESTING_ENABLE", "1")
-    monkeypatch.setenv("VIUR_TESTING_NAMESPACE", "alice")
+    monkeypatch.setenv("VIUR_TESTING", "test:alice")
     monkeypatch.setattr(
         viur.testing, "activate", lambda **kw: calls.append(("activate", kw))
     )
     monkeypatch.setattr(viur.testing, "protect", lambda: calls.append(("protect",)))
-    viur.testing.setup()
+    viur.testing.setup(api_dir=None)
     assert calls[0] == ("activate", {"database": "viur-tests", "namespace": "alice"})
 
 
-def test_setup_explicit_namespace_overrides_env_var(monkeypatch):
-    """Explicit ``namespace=`` kwarg wins over the env var."""
+def test_setup_explicit_kwargs_override_env_var(monkeypatch):
+    """Explicit mode/namespace kwargs win over the env var."""
     calls: list = []
-    monkeypatch.setenv("VIUR_TESTING_ENABLE", "1")
-    monkeypatch.setenv("VIUR_TESTING_NAMESPACE", "from-env")
+    monkeypatch.setenv("VIUR_TESTING", "test:from-env")
     monkeypatch.setattr(
         viur.testing, "activate", lambda **kw: calls.append(("activate", kw))
     )
     monkeypatch.setattr(viur.testing, "protect", lambda: calls.append(("protect",)))
-    viur.testing.setup(namespace="from-call")
+    viur.testing.setup(namespace="from-call", api_dir=None)
     assert calls[0] == ("activate", {"database": "viur-tests", "namespace": "from-call"})
 
 
-def test_setup_empty_namespace_env_var_means_default(monkeypatch):
-    """An empty ``VIUR_TESTING_NAMESPACE`` is treated as "no namespace"."""
+def test_setup_explicit_empty_namespace_means_default(monkeypatch):
+    """An explicit namespace="" is normalised to the default slice."""
     calls: list = []
-    monkeypatch.setenv("VIUR_TESTING_ENABLE", "1")
-    monkeypatch.setenv("VIUR_TESTING_NAMESPACE", "")
+    monkeypatch.delenv("VIUR_TESTING", raising=False)
     monkeypatch.setattr(
         viur.testing, "activate", lambda **kw: calls.append(("activate", kw))
     )
     monkeypatch.setattr(viur.testing, "protect", lambda: calls.append(("protect",)))
-    viur.testing.setup()
+    viur.testing.setup(namespace="", api_dir=None)
     assert calls[0] == ("activate", {"database": "viur-tests", "namespace": None})
 
 
-def test_setup_honours_custom_namespace_env_var(monkeypatch):
-    """Caller can override the env var name."""
+def test_setup_unknown_mode_raises(monkeypatch):
+    monkeypatch.setenv("VIUR_TESTING", "bogus")
+    monkeypatch.setattr(viur.testing, "protect", lambda: None)
+    with pytest.raises(ValueError):
+        viur.testing.setup(api_dir=None)
+
+
+# ---------------------------------------------------------------------------
+# setup() — dev mode / tokenless-browsing wiring
+# ---------------------------------------------------------------------------
+
+
+def test_setup_dev_mode_arms_tokenless(monkeypatch):
+    """VIUR_TESTING=dev:ak → activate() then arm_tokenless_browsing()."""
     calls: list = []
-    monkeypatch.setenv("VIUR_TESTING_ENABLE", "1")
-    monkeypatch.setenv("MY_NS", "bob")
+    monkeypatch.setenv("VIUR_TESTING", "dev:ak")
     monkeypatch.setattr(
         viur.testing, "activate", lambda **kw: calls.append(("activate", kw))
     )
     monkeypatch.setattr(viur.testing, "protect", lambda: calls.append(("protect",)))
-    viur.testing.setup(namespace_env_var="MY_NS")
-    assert calls[0] == ("activate", {"database": "viur-tests", "namespace": "bob"})
-
-
-# ---------------------------------------------------------------------------
-# setup() — tokenless-browsing wiring
-# ---------------------------------------------------------------------------
-
-
-def test_setup_arms_tokenless_when_env_set(monkeypatch):
-    """``VIUR_TESTING_TOKENLESS`` set → setup() calls arm_tokenless_browsing
-    after activate(), forwarding the whitelist."""
-    calls: list = []
-    monkeypatch.setenv("VIUR_TESTING_ENABLE", "1")
-    monkeypatch.setenv("VIUR_TESTING_TOKENLESS", "1")
-    monkeypatch.delenv("VIUR_TESTING_NAMESPACE", raising=False)
-    monkeypatch.setattr(viur.testing, "activate", lambda **kw: None)
-    monkeypatch.setattr(viur.testing, "protect", lambda: None)
     monkeypatch.setattr(
-        viur.testing, "arm_tokenless_browsing", lambda **kw: calls.append(kw)
+        viur.testing,
+        "arm_tokenless_browsing",
+        lambda **kw: calls.append(("tokenless", kw)),
     )
     viur.testing.setup(api_dir=None, tokenless_app_ids=["proj-x"])
-    assert calls == [{"tokenless_app_ids": ["proj-x"]}]
+    assert calls == [
+        ("activate", {"database": "viur-tests", "namespace": "ak"}),
+        ("tokenless", {"tokenless_app_ids": ["proj-x"]}),
+        ("protect",),
+    ]
 
 
-def test_setup_skips_tokenless_when_env_unset(monkeypatch):
+def test_setup_test_mode_skips_tokenless(monkeypatch):
     calls: list = []
-    monkeypatch.setenv("VIUR_TESTING_ENABLE", "1")
-    monkeypatch.delenv("VIUR_TESTING_TOKENLESS", raising=False)
-    monkeypatch.delenv("VIUR_TESTING_NAMESPACE", raising=False)
+    monkeypatch.setenv("VIUR_TESTING", "test:ak")
     monkeypatch.setattr(viur.testing, "activate", lambda **kw: None)
     monkeypatch.setattr(viur.testing, "protect", lambda: None)
     monkeypatch.setattr(
@@ -438,24 +440,9 @@ def test_setup_skips_tokenless_when_env_unset(monkeypatch):
     assert calls == []
 
 
-# ---------------------------------------------------------------------------
-# register_modules()
-# ---------------------------------------------------------------------------
-
-
-def test_register_modules_injects_testmodule_when_active():
-    from viur.testing._test.config import ConfigModule
-    from viur.testing._test import TestModule
-
-    ConfigModule.set_active(database="viur-tests", project_id="p")
-    target: dict = {}
-    viur.testing.register_modules(target)
-    assert target.get("_test") is TestModule
-
-
-def test_register_modules_is_no_op_when_inactive():
-    """No activate() → no key is injected, so prod hosts stay clean."""
-    target: dict = {"existing": "value"}
-    viur.testing.register_modules(target)
-    assert "_test" not in target
-    assert target == {"existing": "value"}
+def test_setup_dev_without_namespace_raises(monkeypatch):
+    """VIUR_TESTING=dev (no namespace) is rejected at boot."""
+    monkeypatch.setenv("VIUR_TESTING", "dev")
+    monkeypatch.setattr(viur.testing, "protect", lambda: None)
+    with pytest.raises(ValueError):
+        viur.testing.setup(api_dir=None)
