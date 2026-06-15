@@ -105,10 +105,9 @@ def test_expected_namespace_none_asserts_default_namespace():
 
 def test_expected_namespace_empty_string_asserts_default_namespace():
     """``expected_namespace=""`` is treated the same as ``None`` so
-    callers can pass ``os.environ.get("VIUR_TESTING_NAMESPACE")``
-    straight through. The server-side convention from
-    :data:`VIUR_TESTING_NAMESPACE` already treats unset and empty
-    identically — the runner must mirror that."""
+    callers can pass the namespace straight through. The server-side
+    convention from the ``VIUR_TESTING`` namespace part already treats
+    unset and empty identically — the runner must mirror that."""
     # Default namespace on the server → empty-string expectation passes.
     opener, _ = _stub_opener(_server_payload("tok", namespace=None))
     status = runner.require_test_mode(

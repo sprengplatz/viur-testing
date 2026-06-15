@@ -324,10 +324,9 @@ def activate(*, database: str = DEFAULT_DATABASE, namespace: str | None = None) 
         database, giving each their own namespace (e.g. ``ak``, ``mb``,
         ``ci-pr-42``) keeps their entities from colliding without
         needing to provision separate databases. An empty string is
-        normalised to ``None`` — same convention as
-        :data:`VIUR_TESTING_NAMESPACE` in :func:`viur.testing.setup`,
-        so direct programmatic activation and env-var-driven boot
-        behave identically.
+        normalised to ``None`` — same convention as the ``VIUR_TESTING``
+        namespace part in :func:`viur.testing.setup`, so direct
+        programmatic activation and env-var-driven boot behave identically.
     :raises RuntimeError: if any of the precondition checks or the probe
         fail. The process must abort rather than continue with a
         half-applied swap.

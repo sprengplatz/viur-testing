@@ -125,8 +125,8 @@ def require_test_mode(
         argument entirely to skip the check. Empty string is normalised
         to ``None`` so callers can pass ``os.environ.get(...)`` directly
         without having to special-case unset vs. set-but-empty —
-        matches the server-side convention from
-        :data:`VIUR_TESTING_NAMESPACE`.
+        matches the server-side convention from the ``VIUR_TESTING``
+        namespace part.
     :param expected_project_id: If set, the server's ``project_id`` must
         match. Use this when your CI knows which GCP project the dev
         server is bound to.

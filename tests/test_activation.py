@@ -697,7 +697,7 @@ def test_activate_default_namespace_is_none(monkeypatch, router_validators):
 def test_activate_normalises_empty_namespace_to_none(monkeypatch, router_validators):
     """``activate(namespace="")`` is the same as no namespace — matches
     setup()'s env-var handling so direct programmatic calls and the
-    ``VIUR_TESTING_NAMESPACE=`` boot path behave identically.
+    ``VIUR_TESTING=test:`` boot path behave identically.
 
     Regression guard: an earlier version passed ``namespace=""`` straight
     through, which built a datastore.Client with an empty-string

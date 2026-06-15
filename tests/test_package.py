@@ -446,3 +446,51 @@ def test_setup_dev_without_namespace_raises(monkeypatch):
     monkeypatch.setattr(viur.testing, "protect", lambda: None)
     with pytest.raises(ValueError):
         viur.testing.setup(api_dir=None)
+
+
+def test_setup_explicit_mode_kwarg_skips_env(monkeypatch):
+    """An explicit mode= kwarg is used directly (env var not read)."""
+    calls: list = []
+    monkeypatch.setenv("VIUR_TESTING", "off")
+    monkeypatch.setattr(
+        viur.testing, "activate", lambda **kw: calls.append(("activate", kw))
+    )
+    monkeypatch.setattr(viur.testing, "protect", lambda: calls.append(("protect",)))
+    viur.testing.setup(mode="test", namespace="ak", api_dir=None)
+    assert calls[0] == ("activate", {"database": "viur-tests", "namespace": "ak"})
+
+
+def test_setup_loads_api_when_mode_on(monkeypatch):
+    """With test mode on and api_dir set, setup() loads the project API."""
+    calls: list = []
+    monkeypatch.setenv("VIUR_TESTING", "test")
+    monkeypatch.setattr(viur.testing, "activate", lambda **kw: None)
+    monkeypatch.setattr(viur.testing, "protect", lambda: None)
+    monkeypatch.setattr(
+        viur.testing, "_load_project_api", lambda api_dir: calls.append(api_dir)
+    )
+    viur.testing.setup(api_dir="testing")
+    assert calls == ["testing"]
+
+
+# ---------------------------------------------------------------------------
+# register_modules()
+# ---------------------------------------------------------------------------
+
+
+def test_register_modules_injects_testmodule_when_active():
+    from viur.testing._test.config import ConfigModule
+    from viur.testing._test import TestModule
+
+    ConfigModule.set_active(database="viur-tests", project_id="p")
+    target: dict = {}
+    viur.testing.register_modules(target)
+    assert target.get("_test") is TestModule
+
+
+def test_register_modules_is_no_op_when_inactive():
+    """No activate() → no key is injected, so prod hosts stay clean."""
+    target: dict = {"existing": "value"}
+    viur.testing.register_modules(target)
+    assert "_test" not in target
+    assert target == {"existing": "value"}

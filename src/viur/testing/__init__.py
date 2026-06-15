@@ -135,7 +135,7 @@ def register_test_submodule(name: str, module_cls: type) -> None:
     runs — typically right after ``register_modules`` in your host's
     ``modules/__init__.py``.
 
-    Production-safe: if test mode is not armed (``VIUR_TESTING_ENABLE``
+    Production-safe: if test mode is not armed (``VIUR_TESTING`` off /
     unset), ``TestModule`` is never mounted and the registration has
     no observable effect.
 

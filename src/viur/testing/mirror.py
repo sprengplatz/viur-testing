@@ -79,7 +79,8 @@ def arm_tokenless_browsing(
     """Boot-time: PIN-gate, then arm tokenless browsing for this process.
 
     Intended to run inside :func:`viur.testing.setup` after
-    :func:`viur.testing.activate`, when ``VIUR_TESTING_TOKENLESS`` is set.
+    :func:`viur.testing.activate`, when the resolved mode is ``dev``
+    (``VIUR_TESTING=dev:<ns>``).
     Once armed, :class:`~viur.testing.validator.TokenValidator` lets requests
     on this (whitelisted) dev server through without the token header — only
     ever exposing the ``viur-tests`` slice, never ``(default)``, and only while
