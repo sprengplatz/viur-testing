@@ -2,9 +2,9 @@
  * Hard guard: refuse to start a test run if any spec file imports
  * directly from `@playwright/test` (instead of going through the
  * `@spltz/viur-testing` re-export of `test` + `expect`, which
- * injects the mandatory X-Viur-Test-Token header on every request).
+ * sets the mandatory viur-test-token cookie on every request).
  *
- * Without that header viur-testing's TokenValidator rejects every
+ * Without that cookie viur-testing's TokenValidator rejects every
  * non-bootstrap request with 403. ESLint can catch this at lint
  * time, but `npx playwright test` bypasses lint — call this from
  * `globalSetup` so the run aborts BEFORE Playwright spins up workers.
@@ -115,7 +115,7 @@ export function assertNoDirectPlaywrightImports(testsDir: string): void {
     `viur-testing: refusing to start the suite — ${offenders.length} spec ` +
       `file(s) import directly from "@playwright/test":\n${list}\n\n` +
       `Spec files must import { test, expect } from "@spltz/viur-testing" ` +
-      `(or via the project's re-export) so the X-Viur-Test-Token header is ` +
+      `(or via the project's re-export) so the viur-test-token cookie is ` +
       `attached to every request. The bare @playwright/test fixtures bypass ` +
       `that wiring and every request from such a spec would be answered ` +
       `with 403 by the viur-testing TokenValidator.`,

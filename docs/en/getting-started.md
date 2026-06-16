@@ -10,7 +10,8 @@ active. It is the only mode that starts without a PIN prompt — and therefore t
 only one usable in automated CI/CD.
 
 Limitation: regular requests, e.g. from the Admin, are rejected because they do
-not carry a valid `viur-test-token` cookie.
+not carry a valid `viur-test-token` cookie. See [Development Mode](dev-mirror-mode.md)
+for how to use them anyway.
 
 ## Prerequisites
 

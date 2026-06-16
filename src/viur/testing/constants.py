@@ -12,14 +12,11 @@ TOKEN_COOKIE = "viur-test-token"
 since 0.5.0. Set once on the client (Playwright ``addCookies`` in tests, or
 the ``/_test/config/enter`` endpoint for manual browsing) and then attached
 by the browser to **every** request, including hard navigations. The
-:class:`~viur.testing.validator.TokenValidator` reads the token from here."""
+:class:`~viur.testing.validator.TokenValidator` reads the token from here.
 
-TOKEN_HEADER = "X-Viur-Test-Token"
-"""Legacy header name. No longer a valid transport for the
-:class:`~viur.testing.validator.TokenValidator` (cookie-only since 0.5.0),
-but still the tripwire watched by
+This is also the tripwire watched by
 :class:`~viur.testing.validator.ProductionGuardValidator`: any request
-carrying this header on a non-dev server is 403'd."""
+carrying this cookie on a non-dev server is 403'd."""
 
 PROBE_KIND = "viur-test-probe"
 """Datastore kind used for the boot-time roundtrip probe.

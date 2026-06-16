@@ -24,10 +24,10 @@ die Playwright-API sowie einen Stub-Generator.
 **Python-Package:**
 
 - ViUR-3-core-Patches für Multi-Datastore- und Namespace-Support.
-- Request-Validator zur Header-Prüfung.
+- Request-Validator zur Token-Prüfung.
 - `viur-mirror`-Tool zum Kopieren von Daten in eine
   Namespace-Datastore-Instanz.
-- PIN-Bestätigung vor dem Start.
+- `enter`-Endpunkt zum direkten Browsen der Test-Instanz.
 
 **npm-Package:**
 
@@ -57,8 +57,10 @@ die Playwright-API sowie einen Stub-Generator.
    `/_test/config/status` auf und verweigert den Teststart, wenn der
    Server eine andere Datenbank, Projekt-ID oder einen anderen
    Token-Hash meldet als erwartet.
-7. **`protect()`** – schützt Live-Instanzen vor versehentlichen Anfragen,
-   die den Testing-Header tragen.
+7. **`protect()`** – installiert in *jeder* Umgebung den Production-Guard:
+   auf einem Nicht-Dev-Server weist er jede Anfrage mit `viur-test-token`-Cookie
+   sofort mit 403 ab, sodass ein versehentlich mitgeschicktes Test-Cookie die
+   Live-Instanz nie erreicht.
 
 ## Endpunkte
 
@@ -74,7 +76,7 @@ die Playwright-API sowie einen Stub-Generator.
 - `POST /_test/config/finish` – löscht die Token-Entity aus der
   Test-Datenbank und beendet damit die Session.
 
-Beide werden vom [`ConfigModule`](api/config.md) innerhalb des
+Alle drei werden vom [`ConfigModule`](api/config.md) innerhalb des
 [`TestModule`](api/test.md)-Containers bereitgestellt. Test-Suiten
 hängen als zusätzliche Submodule unter demselben `/_test/`-Schirm.
 
@@ -116,8 +118,7 @@ finally:
 - [Erste Schritte](getting-started.md) – schrittweise Verdrahtung von
   Host + Runner samt GCP-seitiger Vorbereitung (benannte
   Datastore-Datenbank).
-- [Development-Modus](dev-mirror-mode.md) – lockere Variante, die die
-  Entwicklung von Tests vereinfacht.
+- [Development-Modus](dev-mirror-mode.md) – Nutzung während der Entwicklung samt Datenspiegelung.
 - [Guarded-Modus](guarded-mode.md) – Variante, die im begrenzten Rahmen
   gegen eine beliebige Datenbank (auch live) laufen kann.
 - [Changelog](changelog.md).

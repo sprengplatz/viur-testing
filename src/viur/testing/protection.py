@@ -1,11 +1,11 @@
 """
-Production-side header guard.
+Production-side cookie guard.
 
 The full :class:`~viur.testing.validator.TokenValidator` is only installed
 inside :func:`viur.testing.activate`, which itself only runs on a local dev
-server. In a cloud deployment that means the ``X-Viur-Test-Token``
-header is *ignored* rather than rejected — a request carrying the
-header simply falls through to viur-core's normal auth path.
+server. In a cloud deployment that means the ``viur-test-token``
+cookie is *ignored* rather than rejected — a request carrying the
+cookie simply falls through to viur-core's normal auth path.
 
 :func:`protect` closes that gap by installing the
 :class:`~viur.testing.validator.ProductionGuardValidator` into
@@ -14,9 +14,9 @@ header simply falls through to viur-core's normal auth path.
 
 - In a dev process where :func:`viur.testing.activate` has already run, the
   guard is a no-op (the full :class:`~viur.testing.validator.TokenValidator`
-  owns the header logic).
+  owns the cookie logic).
 - In a cloud process, the guard turns any request carrying the test
-  token header into an immediate 403, regardless of the header's value.
+  token cookie into an immediate 403, regardless of the cookie's value.
 
 Order matters in dev: call :func:`activate` *before* :func:`protect`.
 :func:`protect` imports ``viur.core.request`` which transitively loads

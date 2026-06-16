@@ -23,10 +23,10 @@ provides the Playwright API and a stub generator.
 **Python package:**
 
 - ViUR 3 core patches for multi-Datastore and namespace support.
-- Request validator for header checking.
+- Request validator for token-cookie checking.
 - `viur-mirror` tool for copying data into a namespaced Datastore
   instance.
-- PIN confirmation before start.
+- `enter` endpoint for browsing the test instance directly.
 
 **npm package:**
 
@@ -54,8 +54,10 @@ provides the Playwright API and a stub generator.
 6. **Runner preflight** — `require_test_mode()` calls
    `/_test/config/status` and refuses to start tests if the server
    reports a different database, project id or token hash than expected.
-7. **`protect()`** — guards live instances against accidental requests
-   that carry the testing header.
+7. **`protect()`** — installs the production guard in *every* environment:
+   on a non-dev server it rejects any request carrying a `viur-test-token`
+   cookie with an immediate 403, so a stray test cookie never reaches the
+   live instance.
 
 ## Endpoints
 
@@ -71,7 +73,7 @@ provides the Playwright API and a stub generator.
 - `POST /_test/config/finish` — deletes the token entity from the
   test database, ending the session.
 
-Both are exposed by [`ConfigModule`](api/config.md) under the
+All three are exposed by [`ConfigModule`](api/config.md) under the
 [`TestModule`](api/test.md) container. Test suites hang as additional
 submodules under the same `/_test/` umbrella.
 
@@ -112,8 +114,8 @@ finally:
 
 - [Getting started](getting-started.md) — step-by-step host + runner
   wiring with the GCP-side prep (named Datastore database).
-- [Development Mode](dev-mirror-mode.md) — relaxed variant that
-  simplifies test development.
+- [Development Mode](dev-mirror-mode.md) — use during development,
+  including data mirroring.
 - [Guarded Mode](guarded-mode.md) — variant that can run, within limits,
   against any database (including live).
 - [Changelog](changelog.md).

@@ -1,20 +1,16 @@
-# Development-Modus
+# Development
 
-Der Development-Modus ist derselbe sichere Test-Modus, nur auf deinen eigenen
-Datastore-**Namespace** beschränkt, damit du eine realistische Datenscheibe von
-Hand browsen kannst — ohne die „leere Test-Datenbank"-Reibung. Er kombiniert
-zwei unabhängige Bausteine:
+Zum Entwickeln gibt es weitere Tools:
 
-1. **Seeding** — `viur-mirror` kopiert eine Scheibe der Live-`(default)`-Datenbank
+1. `viur-mirror` kopiert die Live-`(default)`-Datenbank
    in einen Namespace von `viur-tests` (out-of-band, gelegentlich).
-2. **Manuelles Browsen** — den Dev-Server in diesem Namespace booten und das
+2. **Manuelles Browsen** — den Dev-Server booten und das
    Cookie einmal über `/_test/config/enter` scharfschalten; danach die
    Test-Instanz direkt browsen, harte Navigation inklusive.
 
 Der Test-Token bleibt durchgehend **voll erzwungen** — manuelles Browsen
 funktioniert, weil das `viur-test-token`-Cookie bei jedem Request mitfährt
-(siehe [ViUR3 Monkey-Patches](viur3-patches.md)), nicht weil eine Prüfung
-gelockert würde.
+(siehe [ViUR3 Monkey-Patches](viur3-patches.md)).
 
 ## Im eigenen Namespace booten
 
@@ -24,7 +20,8 @@ VIUR_TESTING=ak viur run develop
 
 `VIUR_TESTING=<namespace>` bootet den Test-Modus in diesem Namespace (hier `ak`);
 `VIUR_TESTING=1` nutzt den Default-Namespace. Jeder Entwickler wählt seinen
-eigenen Namespace, damit die gespiegelten Scheiben isoliert bleiben.
+eigenen Namespace, damit die gespiegelten Scheiben isoliert bleiben. Auch CI/CD
+sollte einen eigenen Namespace haben.
 
 ## Manuelles Browsen scharfschalten (das Cookie)
 
@@ -37,8 +34,7 @@ http://localhost:8080/json/_test/config/enter
 Das Backend antwortet mit `Set-Cookie` (`SameSite=Strict; HttpOnly; Path=/`). Ab
 dann browst du `http://localhost:8080/...` ganz normal — harte Navigation,
 Reloads, server-gerenderte Seiten: das Cookie wird automatisch angehängt und der
-Token bleibt erzwungen. Keine PIN, keine Browser-Extension, kein zweiter
-Proxy-Port.
+Token bleibt erzwungen.
 
 ## Namespace befüllen — `viur-mirror`
 

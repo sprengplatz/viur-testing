@@ -25,9 +25,9 @@ server **and** the runner agree they are talking to the test instance.
 4. **Per-request token validator** (`viur-test-token` cookie) blocks every
    request that does not carry the session token, except the
    bootstrap endpoints.
-5. **`protect()` installs a production-side header guard** that 403s
-   any request carrying the test token header outside dev, regardless
-   of its value. Installed in every environment.
+5. **`protect()` installs a production-side cookie guard** that 403s
+   any request carrying the `viur-test-token` cookie outside dev,
+   regardless of its value. Installed in every environment.
 6. **Runner preflight** calls `/json/_test/config/status` and refuses to run
    any test if the server's reply (database, project_id, token hash)
    does not match.
@@ -52,6 +52,7 @@ with a custom wrapper that uses your preferred mechanism instead.
 ```
 /_test/                    TestModule (container, refuses outside dev mode)
   /_test/config/status     ConfigModule.status — issues/returns token
+  /_test/config/enter      ConfigModule.enter  — sets the token cookie
   /_test/config/finish     ConfigModule.finish — deletes token entity
 ```
 
@@ -96,11 +97,11 @@ import render
 core_setup(modules, render)
 ```
 
-`viur.testing.setup()` reads the `VIUR_TESTING` env var
-(`<mode>[:<namespace>]`); for `test` or `dev` mode it calls `activate()`
-(datastore client swap + key-factory patch + closed-system whitelist +
-state priming + validator install) and always installs the production
-header guard via `protect()`.
+`viur.testing.setup()` reads the `VIUR_TESTING` env var (`1`/`true`/`on`
+for the default namespace, or any other value as the namespace verbatim);
+when on it calls `activate()` (datastore client swap + key-factory patch +
+closed-system allowlist + state priming + validator install) and always
+installs the production cookie guard via `protect()`.
 
 In `modules/__init__.py` register the test endpoints — idempotent and
 safe to leave in place for production deployments (no-op when test
@@ -125,8 +126,9 @@ you can call yourself: `viur.testing.activate(database=...)`,
 ## Running the dev server with test mode
 
 Toggle test mode at boot by setting the env var that `setup()` reads.
-The value is `<mode>[:<namespace>]` — `test` (or `1`/`true`/`on`),
-`test:<ns>`, or `dev:<ns>`; unset / `0` / `off` means off:
+`1` (or `true`/`on`) means on with the default namespace; any other
+value is the namespace verbatim (`VIUR_TESTING=alice`); unset / `0` /
+`off` means off:
 
 ```sh
 VIUR_TESTING=1 viur run
@@ -211,7 +213,7 @@ public catalog browsing, public marketing pages — spinning up a
 dedicated test backend is overkill. The Playwright companion package
 auto-detects this case: when the backend does **not** expose
 `/_test/config/status` (HTTP 404), it falls into **Guarded Mode** —
-no test database, no token header, no `_test/` endpoints. Tests run
+no test database, no token cookie, no `_test/` endpoints. Tests run
 as a normal browser would.
 
 Because this bypasses the bilateral guarantee, Guarded Mode demands

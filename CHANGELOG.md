@@ -34,8 +34,13 @@ tokenless dev mode and the Vite token plugin.
   browsing is the cookie flow above. Dev-Mirror **seeding** (`viur-mirror`) is
   unchanged (still PIN-gated); boot `VIUR_TESTING=<namespace>` to work in your
   slice.
-- **Unchanged** — the `ProductionGuardValidator` (still a tripwire on the legacy
-  `X-Viur-Test-Token` header), Datastore isolation, Guarded Mode.
+- **BREAKING — cookie-based production guard; legacy header fully gone.** The
+  `TOKEN_HEADER` constant and its export are removed. The
+  `ProductionGuardValidator` now watches the `viur-test-token` **cookie**: on a
+  non-dev server any request carrying it gets an immediate 403 (in dev the
+  `TokenValidator` owns the cookie). Nothing in the package reads the
+  `X-Viur-Test-Token` header any more.
+- **Unchanged** — Datastore isolation, Guarded Mode.
 
 ### Migration
 

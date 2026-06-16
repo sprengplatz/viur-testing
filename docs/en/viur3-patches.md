@@ -5,7 +5,7 @@ database (default `viur-tests`) and an optional **namespace**. Neither viur-core
 nor `google-cloud-datastore` fully support that out of the box, so test mode
 applies a small set of runtime patches that bridge the gap.
 
-All patches share three properties:
+All patches share two properties:
 
 - **dev-server only** — installed from `activate()`; the sole exception is the
   production guard, installed by `protect()` in every environment.
@@ -84,12 +84,11 @@ Two validators are appended to the router's class-level list:
   and `/_test/config/finish` bootstrap paths bypass it so the runner (and the
   manual-browse navigation) can open a session before a cookie exists.
 - **`ProductionGuardValidator`** — installed by `protect()` in **every**
-  environment, and still watches the legacy `X-Viur-Test-Token` **header** as a
-  tripwire: on a non-dev server it 403s any request carrying that header,
-  regardless of value; in dev it is a no-op. The header is no longer a valid
-  transport (the `TokenValidator` reads the cookie), so the guard purely
-  catches a stray copy-pasted header hitting production. See
-  [Validators](api/validator.md).
+  environment, and watches the `viur-test-token` **cookie** as a tripwire: on a
+  non-dev server it 403s any request carrying that cookie, regardless of value;
+  in dev it is a no-op (the `TokenValidator` owns the cookie there). A test
+  cookie should never reach production, so the guard rejects it loudly instead
+  of letting it fall through. See [Validators](api/validator.md).
 
 Both registrations are membership-checked, so calling them twice is a no-op.
 

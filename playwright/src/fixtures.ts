@@ -55,7 +55,7 @@ export interface TestModeFixtures {
    *  in guarded mode. */
   serverStatus: ServerStatus
   /** Direct backend APIRequestContext that already carries the token
-   *  header. Only available in test mode; the fixture auto-skips
+   *  cookie. Only available in test mode; the fixture auto-skips
    *  the test in guarded mode. */
   backendApi: APIRequestContext
 }

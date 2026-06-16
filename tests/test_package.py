@@ -11,7 +11,6 @@ def test_top_level_exports():
         "DEFAULT_DATABASE",
         "ServerStatus",
         "TOKEN_COOKIE",
-        "TOKEN_HEADER",
         "TestModePreflightError",
         "activate",
         "finish",

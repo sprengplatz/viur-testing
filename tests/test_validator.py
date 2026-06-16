@@ -4,7 +4,7 @@ import types
 
 import pytest
 
-from viur.testing.constants import TOKEN_COOKIE, TOKEN_HEADER
+from viur.testing.constants import TOKEN_COOKIE
 from viur.testing._test.config import ConfigModule
 from viur.testing.validator import ProductionGuardValidator, TokenValidator
 
@@ -32,7 +32,6 @@ def _reset_test_module_state():
 
 def test_token_constants():
     assert TOKEN_COOKIE == "viur-test-token"
-    assert TOKEN_HEADER == "X-Viur-Test-Token"
 
 
 # ---------------------------------------------------------------------------
@@ -91,7 +90,7 @@ def test_validate_ignores_header_transport():
     ConfigModule.set_active(database="viur-tests", project_id="p")
     ConfigModule.set_token("secret")
     result = TokenValidator.validate(
-        _make_request(headers={TOKEN_HEADER: "secret"}, cookies={})
+        _make_request(headers={"X-Viur-Test-Token": "secret"}, cookies={})
     )
     assert result is not None
     assert result[0] == 403
@@ -191,35 +190,35 @@ def test_validate_uses_constant_time_compare(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# ProductionGuardValidator — still a header tripwire (unchanged)
+# ProductionGuardValidator — cookie tripwire on non-dev servers
 # ---------------------------------------------------------------------------
 
 
-def test_production_guard_passes_when_header_absent_in_prod(conf_instance):
+def test_production_guard_passes_when_cookie_absent_in_prod(conf_instance):
     conf_instance.is_dev_server = False
-    result = ProductionGuardValidator.validate(_make_request(headers={}))
+    result = ProductionGuardValidator.validate(_make_request(cookies={}))
     assert result is None
 
 
-def test_production_guard_passes_when_header_absent_in_dev(conf_instance):
+def test_production_guard_passes_when_cookie_absent_in_dev(conf_instance):
     conf_instance.is_dev_server = True
-    result = ProductionGuardValidator.validate(_make_request(headers={}))
+    result = ProductionGuardValidator.validate(_make_request(cookies={}))
     assert result is None
 
 
-def test_production_guard_passes_in_dev_even_with_header(conf_instance):
-    """In dev, the full TokenValidator handles the header — guard is no-op."""
+def test_production_guard_passes_in_dev_even_with_cookie(conf_instance):
+    """In dev, the full TokenValidator handles the cookie — guard is no-op."""
     conf_instance.is_dev_server = True
     result = ProductionGuardValidator.validate(
-        _make_request(headers={TOKEN_HEADER: "anything"})
+        _make_request(cookies={TOKEN_COOKIE: "anything"})
     )
     assert result is None
 
 
-def test_production_guard_rejects_header_in_prod(conf_instance):
+def test_production_guard_rejects_cookie_in_prod(conf_instance):
     conf_instance.is_dev_server = False
     result = ProductionGuardValidator.validate(
-        _make_request(headers={TOKEN_HEADER: "anything"})
+        _make_request(cookies={TOKEN_COOKIE: "anything"})
     )
     assert result is not None
     code, _, body = result
@@ -227,19 +226,19 @@ def test_production_guard_rejects_header_in_prod(conf_instance):
     assert "not accepted" in body
 
 
-def test_production_guard_rejects_header_regardless_of_value(conf_instance):
+def test_production_guard_rejects_cookie_regardless_of_value(conf_instance):
     conf_instance.is_dev_server = False
     for value in ["x", "fake-token", "a" * 200, "../etc/passwd"]:
         result = ProductionGuardValidator.validate(
-            _make_request(headers={TOKEN_HEADER: value})
+            _make_request(cookies={TOKEN_COOKIE: value})
         )
         assert result is not None and result[0] == 403, value
 
 
 def test_production_guard_treats_empty_string_as_missing(conf_instance):
-    """Empty header value should not trigger the guard — same as absent."""
+    """Empty cookie value should not trigger the guard — same as absent."""
     conf_instance.is_dev_server = False
     result = ProductionGuardValidator.validate(
-        _make_request(headers={TOKEN_HEADER: ""})
+        _make_request(cookies={TOKEN_COOKIE: ""})
     )
     assert result is None

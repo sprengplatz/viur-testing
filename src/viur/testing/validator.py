@@ -65,19 +65,19 @@ def _is_bootstrap_path(path: str | None, actions: frozenset[str]) -> bool:
 
 
 class ProductionGuardValidator(RequestValidator):
-    """Reject any request that carries a test-token header outside dev.
+    """Reject any request that carries the test-token cookie outside dev.
 
     Defense in depth: the full :class:`TokenValidator` is only installed
     inside :func:`viur.testing.activate`, which itself refuses to run outside
     a local dev server. A cloud deployment therefore normally has *no*
-    e2e validator at all — which means the ``X-Viur-Test-Token`` header
+    e2e validator at all — which means the ``viur-test-token`` cookie
     would be ignored rather than rejected.
 
     This validator closes that gap. The host installs it explicitly via
     :func:`viur.testing.protect` in **every** environment. In a dev process
-    it is effectively a no-op (the full :class:`TokenValidator` handles
-    the header logic). In a cloud process it raises 403 the moment a
-    test-token header shows up at all, regardless of its value.
+    it is effectively a no-op (the full :class:`TokenValidator` owns the
+    cookie logic). In a cloud process it raises 403 the moment the
+    test-token cookie shows up at all, regardless of its value.
     """
 
     name = "ProductionGuardValidator"
@@ -85,18 +85,19 @@ class ProductionGuardValidator(RequestValidator):
     @staticmethod
     def validate(request: "BrowseHandler") -> tuple[int, str, str] | None:
         from viur.core.config import conf  # noqa: PLC0415
-        from .constants import TOKEN_HEADER  # noqa: PLC0415
+        from .constants import TOKEN_COOKIE  # noqa: PLC0415
 
-        if not request.request.headers.get(TOKEN_HEADER):
-            return None  # no test-token header — nothing to guard against
+        cookies = getattr(request.request, "cookies", None) or {}
+        if not cookies.get(TOKEN_COOKIE):
+            return None  # no test-token cookie — nothing to guard against
 
         if getattr(conf.instance, "is_dev_server", False):
-            return None  # in dev the TokenValidator owns this header
+            return None  # in dev the TokenValidator owns this cookie
 
         return (
             403,
             "Forbidden",
-            f"viur-test: {TOKEN_HEADER} is not accepted on this server",
+            f"viur-test: {TOKEN_COOKIE} cookie is not accepted on this server",
         )
 
 

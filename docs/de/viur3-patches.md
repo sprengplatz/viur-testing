@@ -6,7 +6,7 @@ Weder viur-core noch `google-cloud-datastore` unterstützen das vollständig out
 of the box — der Test-Modus überbrückt das mit einer Reihe von
 Laufzeit-Patches.
 
-Alle Patches teilen drei Eigenschaften:
+Alle Patches teilen zwei Eigenschaften:
 
 - **Nur Dev-Server** — installiert über `activate()`; einzige Ausnahme ist der
   Production-Guard, den `protect()` in jeder Umgebung installiert.
@@ -89,13 +89,12 @@ Zwei Validatoren werden an die klassenweite Liste des Routers angehängt:
   `/_test/config/enter` und `/_test/config/finish` umgehen ihn, damit Runner und
   manuelle Navigation eine Session öffnen können, bevor ein Cookie existiert.
 - **`ProductionGuardValidator`** — installiert von `protect()` in **jeder**
-  Umgebung; überwacht weiterhin den Legacy-Header `X-Viur-Test-Token` als
-  Stolperdraht: Auf einem Nicht-Dev-Server beantwortet er jede Anfrage mit
-  diesem Header mit 403, unabhängig vom Wert; in Dev ist er ein No-op. Der
-  Header ist kein gültiger Transport mehr (der `TokenValidator` liest das
-  Cookie), der Guard fängt also nur noch einen versehentlich kopierten Header
-  gegen Produktion ab. Siehe [Validatoren](api/validator.md).
-
+  Umgebung; überwacht das `viur-test-token`-**Cookie** als Stolperdraht: Auf
+  einem Nicht-Dev-Server beantwortet er jede Anfrage mit diesem Cookie mit 403,
+  unabhängig vom Wert; in Dev ist er ein No-op (dort besitzt der
+  `TokenValidator` das Cookie). Ein Test-Cookie darf Produktion nie erreichen,
+  der Guard weist es also laut ab, statt es durchfallen zu lassen. Siehe
+  [Validatoren](api/validator.md).
 
 ## 6. Closed-System-Allowlist
 

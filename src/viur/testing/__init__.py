@@ -23,8 +23,8 @@ Server side
   ``config``, exposing ``POST /json/_test/config/status`` and
   ``POST /json/_test/config/finish``.
 - :class:`~viur.testing.validator.TokenValidator` rejects every
-  non-bootstrap request that lacks the matching ``X-Viur-Test-Token``
-  header.
+  non-bootstrap request that lacks the matching ``viur-test-token``
+  cookie.
 
 Runner side
 ~~~~~~~~~~~
@@ -59,7 +59,7 @@ import os as _os
 import typing as t
 
 from .activation import activate
-from .constants import DEFAULT_DATABASE, TOKEN_COOKIE, TOKEN_HEADER
+from .constants import DEFAULT_DATABASE, TOKEN_COOKIE
 from .mode import parse_spec
 from .protection import protect
 from .runner import ServerStatus, TestModePreflightError, finish, require_test_mode
@@ -70,7 +70,6 @@ __all__ = [
     "DEFAULT_DATABASE",
     "ServerStatus",
     "TOKEN_COOKIE",
-    "TOKEN_HEADER",
     "TestModePreflightError",
     "activate",
     "finish",
@@ -176,7 +175,7 @@ def setup(
        ``database`` + ``namespace``, probe, validator) and loads the project
        test API.
     3. Calls :func:`protect` unconditionally to install the production
-       header guard.
+       cookie guard.
 
     The single env var carries on/off + an optional namespace::
 

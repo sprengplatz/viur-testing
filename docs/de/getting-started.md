@@ -11,7 +11,8 @@ PIN-Eingabe startet — und damit der einzige, der sich in CI/CD automatisiert
 einsetzen lässt.
 
 Einschränkung: Reguläre Requests, etwa aus dem Admin, werden abgewiesen, da sie
-keinen gültigen `viur-test-token` cookie mitsenden.
+kein gültiges `viur-test-token`-Cookie mitsenden. Wie du sie dennoch nutzen
+kannst, zeigt der [Development-Modus](dev-mirror-mode.md).
 
 ## Voraussetzungen
 
