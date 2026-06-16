@@ -4,38 +4,30 @@
  * Drops the standard set of e2e-suite files into a target directory.
  * Re-runnable — already-existing files are skipped, never overwritten.
  *
- * Two scaffold modes:
- *
- *   - **test** (default): backend is a local dev server with
- *     ``VIUR_TESTING=test``. Scaffolds a Vite-proxy config so
- *     the dev server is a transparent test-mode adapter, plus an
- *     example spec that consumes the ``serverStatus`` fixture.
- *
- *   - **guarded**: backend is an already-deployed instance with no
- *     ``/_test/`` endpoints. Scaffolds a slim setup that drives the
- *     live application via Playwright directly — no Vite, no
- *     ``.env.e2e``, no token-aware fixtures. The example spec is a
- *     public-page smoke test.
- *
- * Mode selection happens interactively when stdin is a TTY (the
- * common case for ``npx viur-testing-init``). The CLI also accepts
- * ``--mode test|guarded`` (and the ``--guarded`` shortcut) to skip
- * the prompt — useful when scaffolding from a script or CI.
+ * Scaffolds a single **test-mode** suite: the backend is a local dev
+ * server armed with ``VIUR_TESTING=test``. The generated files include
+ * a Vite-proxy config that turns the dev server into a transparent
+ * test-mode adapter, plus an example spec that consumes the
+ * ``serverStatus`` fixture.
  *
  * The entry point lives in `bin/init.mjs` (a tiny shebang wrapper)
  * so npm can resolve the bin without TS-compiler shebang quirks.
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs"
 import { dirname, isAbsolute, join, resolve } from "node:path"
 import { createInterface, type Interface as ReadlineInterface } from "node:readline/promises"
 import { stdin, stdout } from "node:process"
 import { fileURLToPath } from "node:url"
 
-/** Default subdirectory beneath `cwd` where the e2e suite gets scaffolded. */
+/** Subdirectory (relative to the detected project root) where the e2e suite lands. */
 const DEFAULT_RELATIVE_TARGET = "testing/e2e"
 
-export type ScaffoldMode = "test" | "guarded"
+/** Directory name we walk up the tree looking for to anchor the project root. */
+const PROJECT_ROOT_MARKER = "deploy"
+
+/** How many directory levels above `cwd` we probe for the marker. */
+const MAX_ROOT_LOOKUP_LAYERS = 10
 
 /**
  * SemVer caret range for the published ``@spltz/viur-testing`` package,
@@ -262,109 +254,127 @@ test("backend reports a valid test mode session", async ({ serverStatus }) => {
 `,
 }
 
-const GUARDED_MODE_TEMPLATES: Record<string, string> = {
-  "package.json": `{
-  "name": "PROJECT-e2e",
-  "private": true,
-  "version": "0.1.0",
-  "description": "End-to-end Playwright smoke tests for PROJECT (guarded mode).",
-  "type": "module",
-  "scripts": {
-    "test": "playwright test",
-    "test:headed": "playwright test --headed",
-    "test:ui": "playwright test --ui",
-    "report": "playwright show-report",
-    "install-browsers": "playwright install --with-deps chromium"
-  },
-  "devDependencies": {
-    "@playwright/test": "^1.49.0",
-    "@spltz/viur-testing": "VIUR_TESTING_VERSION_RANGE",
-    "@types/node": "^22.10.0",
-    "typescript": "^5.6.0"
-  }
-}
-`,
-
-  "playwright.config.ts": `import { defineConfig, devices } from "@playwright/test"
-
-// Guarded Mode: tests run against an already-deployed instance.
-// Set E2E_BACKEND_URL to point at the target, e.g.:
-//   E2E_BACKEND_URL=https://staging.example.com npm test
-//
-// On every run the runner probes /json/_test/config/status — if it
-// returns 404 (no test mode), an interactive 6-digit PIN gate
-// appears in the terminal. Wrong PIN aborts; the suite never
-// starts. See https://sprengplatz.github.io/viur-testing/guarded-mode/
-// for details.
-const BACKEND_URL = process.env.E2E_BACKEND_URL ?? "https://example.com"
-
-// globalSetup picks this up via process.env — set here so a single
-// override on the playwright CLI flows everywhere consistently.
-process.env.E2E_BACKEND_URL = BACKEND_URL
-
-export default defineConfig({
-  testDir: "./tests",
-  outputDir: "./test-results",
-  fullyParallel: false,
-  forbidOnly: !!process.env.CI,
-  retries: process.env.CI ? 1 : 0,
-  workers: 1,
-  reporter: process.env.CI
-    ? [["github"], ["html", { open: "never" }]]
-    : [["list"], ["html", { open: "never" }]],
-  globalSetup: "@spltz/viur-testing/global-setup",
-  globalTeardown: "@spltz/viur-testing/global-teardown",
-
-  use: {
-    baseURL: BACKEND_URL,
-    trace: "retain-on-failure",
-    video: "retain-on-failure",
-    screenshot: "only-on-failure",
-  },
-
-  projects: [
-    {
-      name: "chromium",
-      use: { ...devices["Desktop Chrome"] },
-    },
-  ],
-})
-`,
-
-  "tests/example.spec.ts": `/**
- * example.spec.ts — public-page smoke test for GUARDED MODE.
+/**
+ * Backend-side scaffolding. Lives as a sibling of the e2e suite
+ * (``testing/api`` next to ``testing/e2e``), so the keys are written
+ * relative to the e2e target with a leading ``../``.
  *
- * Replace the body with assertions that match your actual deployed
- * page. Delete this file once you have a real test suite.
- *
- * See https://sprengplatz.github.io/viur-testing/guarded-mode/ for
- * details on which fixtures auto-skip and why.
+ * ``api/__init__.py`` is the project's test-API package: Python modules
+ * dropped here are picked up by viur-testing and exposed under
+ * ``/json/_test/...`` when the server runs in test mode — that is the
+ * backend half of the per-spec fixtures the e2e suite calls.
  */
+const API_TEMPLATES: Record<string, string> = {
+  "../api/__init__.py": `"""Project-specific test API extensions.
 
-import { test, expect } from "@spltz/viur-testing"
+Python modules placed here are picked up by viur-testing and exposed under
+\`/json/_test/...\` when the server runs in test mode (\`VIUR_TESTING=test\`).
 
-test("homepage renders", async ({ page }) => {
-  await page.goto("/")
-  // Trivial check: any non-empty <title>. Tighten this once you
-  // know what the page actually looks like.
-  await expect(page).toHaveTitle(/.+/)
-})
+Use this to:
+- seed test data (users, dealers, articles, carts) from a known state
+- expose project-specific test fixtures the e2e suite calls before/after tests
+- tear down or reset state between scenarios
+
+Modules added here should follow ViUR's Module conventions (subclass
+\`viur.core.Module\`, expose actions via \`@exposed\`).
+"""
+`,
+
+  "../api/user.py": `import logging
+
+from viur.core import Module, conf, db, skeleton, utils
+from viur.core.decorators import exposed, force_post
+from viur.core.modules.user import Status
+
+# Written into the firstname bone of every user created by this spec so
+# teardown can find and remove exactly the accounts it owns — never a
+# real user. Keep it improbable as a real first name.
+TEST_USER_MARKER = "viur-e2e-test"
+
+
+class UserTestApi(Module):
+    """Spec module: setup/teardown test users
+
+    Mounted at /_test/user/.
+
+    Endpoints:
+      setup          — create test user
+      teardown       — deletes all created users
+    """
+
+    json = True
+    accessRights = None
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+    @exposed
+    @force_post
+    def setup(self) -> dict:
+        """Create a fresh, active test user and return its login credentials.
+
+        The e2e suite calls this in \`\`beforeAll\`\` and logs in with the
+        returned \`\`credentials\`\`. The account is tagged via
+        :data:\`TEST_USER_MARKER\` so :meth:\`teardown\` can clean it up.
+        """
+        user_module = conf.main_app.vi.user
+        # skeletonByKind ensures we get the full skeleton (incl. the
+        # password bone added by UserPassword), matching how viur-core
+        # creates the initial admin user.
+        skel = skeleton.skeletonByKind(user_module.addSkel().kindName)()
+
+        name = f"e2e+{utils.string.random(12)}@test.local"
+        password = utils.string.random(16)
+
+        skel["name"] = name
+        skel["firstname"] = TEST_USER_MARKER
+        skel["lastname"] = "E2E"
+        skel["password"] = password
+        skel["status"] = Status.ACTIVE  # enabled right away, no email/admin gate
+        skel["access"] = ["root"]
+
+        skel.write()
+
+        logging.info("[viur-e2e] created test user %r", name)
+        return {"credentials": {"name": name, "password": password}}
+
+    @exposed
+    @force_post
+    def teardown(self) -> dict:
+        """Delete every user this spec created, identified by the marker.
+
+        Uses \`\`skel.delete()\`\` (not a raw datastore delete) so the unique
+        lock on the e-mail bone is released — otherwise the address would
+        stay reserved and re-runs could collide.
+        """
+        kind = conf.main_app.vi.user.addSkel().kindName
+        deleted = 0
+
+        for entity in db.Query(kind).filter("firstname.idx =", TEST_USER_MARKER).iter():
+            skel = skeleton.skeletonByKind(kind)()
+            try:
+                skel.delete(entity.key)
+                deleted += 1
+            except Exception as exc:  # keep going — one bad row must not block cleanup
+                logging.exception("[viur-e2e] failed to delete test user %s: %s", entity.key, exc)
+
+        logging.info("[viur-e2e] teardown removed %d test user(s)", deleted)
+        return {"deleted": deleted}
 `,
 }
 
-function buildTemplates(mode: ScaffoldMode): Record<string, string> {
-  const modeSpecific = mode === "guarded" ? GUARDED_MODE_TEMPLATES : TEST_MODE_TEMPLATES
-  return { ...COMMON_TEMPLATES, ...modeSpecific }
+function buildTemplates(): Record<string, string> {
+  return { ...COMMON_TEMPLATES, ...TEST_MODE_TEMPLATES, ...API_TEMPLATES }
 }
 
 // ---------------------------------------------------------------------------
-// Interactive prompt
+// Project-root detection + interactive target confirmation
 // ---------------------------------------------------------------------------
 
 /**
- * Injectable I/O surface for the scaffold-mode prompt so the
- * interactive path is testable without a real TTY. Production code
- * uses :data:`defaultInitPromptIo`.
+ * Injectable I/O surface for the target-directory confirmation prompt
+ * so the interactive path is testable without a real TTY. Production
+ * code uses :data:`defaultInitPromptIo`.
  */
 export interface InitPromptIo {
   isTty(): boolean
@@ -389,53 +399,29 @@ export const defaultInitPromptIo: InitPromptIo = {
   },
 }
 
-async function promptForMode(io: InitPromptIo): Promise<ScaffoldMode> {
-  io.writeLine("")
-  io.writeLine("Which scaffold do you want?")
-  io.writeLine("")
-  io.writeLine("  [1] Test Mode  (default)")
-  io.writeLine("      Backend is a local dev server with VIUR_TESTING=test.")
-  io.writeLine("      Scaffolds Vite proxy + token-aware fixtures.")
-  io.writeLine("")
-  io.writeLine("  [2] Guarded Mode")
-  io.writeLine("      Backend is an already-deployed instance (no test database,")
-  io.writeLine("      no _test/ endpoints). Scaffolds a slim setup; specs that")
-  io.writeLine("      need _test infrastructure auto-skip.")
-  io.writeLine("")
-
-  const reply = (await io.readLine("  Select [1/2, default 1]: ")).trim().toLowerCase()
-  if (reply === "" || reply === "1" || reply === "test") return "test"
-  if (reply === "2" || reply === "guarded" || reply === "g") return "guarded"
-  // Anything else → bail with a clear message rather than silently
-  // defaulting; an unexpected input usually means the user meant
-  // something specific.
-  throw new Error(
-    `viur-testing-init: unrecognised selection ${JSON.stringify(reply)}. ` +
-      `Expected 1/2 (or "test"/"guarded"). Re-run and pick a valid option, ` +
-      `or pass --mode <test|guarded> to skip the prompt.`,
-  )
-}
-
 /**
- * Resolve the scaffold mode. Explicit ``opts.mode`` wins; otherwise
- * we prompt when stdin is a TTY, or default to ``test`` (with a log
- * line) when it is not — that preserves the pre-0.3 behaviour of
- * ``viur-testing-init`` in non-interactive contexts (CI scaffolding,
- * IDE tasks without TTY).
+ * Walk up from ``startDir`` (inclusive) looking for a directory that
+ * contains a ``deploy/`` child. That directory is treated as the
+ * project root — the e2e suite is anchored there rather than wherever
+ * the CLI happened to be invoked. Returns ``null`` if no marker is
+ * found within :data:`MAX_ROOT_LOOKUP_LAYERS` levels.
  */
-async function resolveMode(
-  explicit: ScaffoldMode | undefined,
-  io: InitPromptIo,
-): Promise<ScaffoldMode> {
-  if (explicit !== undefined) return explicit
-  if (!io.isTty()) {
-    console.log(
-      `[viur-testing-init] no TTY — defaulting to "test" mode. ` +
-        `Pass --mode test|guarded (or --guarded) to override.`,
-    )
-    return "test"
+function findProjectRoot(startDir: string): string | null {
+  let dir = startDir
+  for (let depth = 0; depth <= MAX_ROOT_LOOKUP_LAYERS; depth += 1) {
+    const candidate = join(dir, PROJECT_ROOT_MARKER)
+    try {
+      if (existsSync(candidate) && statSync(candidate).isDirectory()) {
+        return dir
+      }
+    } catch {
+      // unreadable entry — keep walking
+    }
+    const parent = dirname(dir)
+    if (parent === dir) break
+    dir = parent
   }
-  return await promptForMode(io)
+  return null
 }
 
 // ---------------------------------------------------------------------------
@@ -449,30 +435,25 @@ export interface InitOptions {
    * Override the resolved target directory. Used by the CLI wrapper
    * when the user passes a positional argument; relative paths are
    * resolved against `cwd`, absolute paths are used as-is. When
-   * omitted, the target is `<cwd>/testing/e2e`.
+   * omitted, the target is derived from the detected project root
+   * (the closest ancestor containing a ``deploy/`` directory) and the
+   * user is asked to confirm or adjust it.
    */
   target?: string
   /** Override the placeholder PROJECT name in templates. */
   projectName?: string
-  /**
-   * Scaffold mode. When omitted, prompts on TTY and defaults to
-   * ``"test"`` on non-TTY. Pass explicitly to skip the prompt.
-   */
-  mode?: ScaffoldMode
   /** Prompt I/O override — used in tests. */
   _io?: InitPromptIo
 }
 
 export async function initProject(opts: InitOptions = {}): Promise<void> {
   const cwd = opts.cwd ?? process.cwd()
-  const targetDir = resolveTargetDir(cwd, opts.target)
+  const io = opts._io ?? defaultInitPromptIo
+  const targetDir = await resolveTargetDir(cwd, opts.target, io)
   const projectName = opts.projectName ?? deriveProjectName(targetDir)
   const viurTestingVersionRange = detectOwnVersionRange()
-  const io = opts._io ?? defaultInitPromptIo
-  const mode = await resolveMode(opts.mode, io)
-  const templates = buildTemplates(mode)
+  const templates = buildTemplates()
 
-  console.log(`[viur-testing-init] mode: ${mode}`)
   console.log(`[viur-testing-init] scaffolding into ${targetDir}`)
   if (projectName !== "PROJECT") {
     console.log(`[viur-testing-init] project name: ${projectName}`)
@@ -504,24 +485,59 @@ export async function initProject(opts: InitOptions = {}): Promise<void> {
   if (written > 0) {
     console.log()
     console.log("Next steps:")
-    if (mode === "test") {
-      console.log("  1. Adjust the TODO markers in `vite.e2e.config.ts`.")
-      console.log("  2. Run `npm install`.")
-      console.log("  3. Boot your backend with `VIUR_TESTING=test viur run`.")
-      console.log("  4. `npm test`.")
-    } else {
-      console.log("  1. Set E2E_BACKEND_URL to your deployed backend's origin.")
-      console.log("  2. Run `npm install`.")
-      console.log("  3. `npm test` — confirm the 6-digit PIN gate on the terminal.")
-    }
+    console.log("  1. Adjust the TODO markers in `vite.e2e.config.ts`.")
+    console.log("  2. Run `npm install`.")
+    console.log("  3. Boot your backend with `VIUR_TESTING=test viur run`.")
+    console.log("  4. `npm test`.")
   }
 }
 
-function resolveTargetDir(cwd: string, override: string | undefined): string {
-  if (override === undefined) {
-    return join(cwd, DEFAULT_RELATIVE_TARGET)
+async function resolveTargetDir(
+  cwd: string,
+  override: string | undefined,
+  io: InitPromptIo,
+): Promise<string> {
+  // Explicit positional argument always wins — no detection, no prompt.
+  if (override !== undefined) {
+    return isAbsolute(override) ? override : resolve(cwd, override)
   }
-  return isAbsolute(override) ? override : resolve(cwd, override)
+
+  const root = findProjectRoot(cwd)
+  const suggested = root
+    ? join(root, DEFAULT_RELATIVE_TARGET)
+    : join(cwd, DEFAULT_RELATIVE_TARGET)
+
+  // Non-interactive (CI, IDE task, piped stdin): take the suggestion
+  // and log how it was derived — there is no human to confirm.
+  if (!io.isTty()) {
+    if (root) {
+      console.log(`[viur-testing-init] found "${PROJECT_ROOT_MARKER}/" project root: ${root}`)
+    } else {
+      console.log(
+        `[viur-testing-init] no "${PROJECT_ROOT_MARKER}/" directory found within ` +
+          `${MAX_ROOT_LOOKUP_LAYERS} levels above ${cwd} — using current directory.`,
+      )
+    }
+    return suggested
+  }
+
+  io.writeLine("")
+  if (root) {
+    io.writeLine(`Found "${PROJECT_ROOT_MARKER}/" project root: ${root}`)
+  } else {
+    io.writeLine(
+      `No "${PROJECT_ROOT_MARKER}/" directory found within ${MAX_ROOT_LOOKUP_LAYERS} ` +
+        `levels above the current directory.`,
+    )
+  }
+  io.writeLine(`Suggested e2e suite location: ${suggested}`)
+  io.writeLine("")
+
+  const reply = (
+    await io.readLine("Press Enter to accept, or type a different path: ")
+  ).trim()
+  if (reply === "") return suggested
+  return isAbsolute(reply) ? reply : resolve(cwd, reply)
 }
 
 function deriveProjectName(targetDir: string): string {
