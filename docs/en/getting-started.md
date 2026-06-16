@@ -10,7 +10,7 @@ active. It is the only mode that starts without a PIN prompt — and therefore t
 only one usable in automated CI/CD.
 
 Limitation: regular requests, e.g. from the Admin, are rejected because they do
-not carry a valid `X-Viur-Test-Token`.
+not carry a valid `viur-test-token` cookie.
 
 ## Prerequisites
 
@@ -76,7 +76,7 @@ viur.testing.register_modules(globals())
 ## Run the dev server in test mode
 
 ```bash
-VIUR_TESTING=test viur run develop
+VIUR_TESTING=1 viur run develop
 ```
 
 On first boot you should see in the log:

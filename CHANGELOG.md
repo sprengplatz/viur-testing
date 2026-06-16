@@ -5,6 +5,56 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] — 2026-06-16
+
+Combined Python + `@spltz/viur-testing` (npm) release. Switches the test-token
+transport from a header to a **cookie** (so manual browsing finally works on a
+hard navigation), simplifies the env var to a single value, and removes the
+tokenless dev mode and the Vite token plugin.
+
+- **BREAKING — cookie-first token transport.** The session token now travels as
+  a `viur-test-token` cookie (`SameSite=Strict; HttpOnly; Path=/`) instead of
+  the `X-Viur-Test-Token` header. The `TokenValidator` accepts **only** the
+  cookie. A new `GET /_test/config/enter` endpoint sets the cookie for manual
+  browsing — hard navigations, reloads and server-rendered pages included, with
+  the token still fully enforced. npm: the fixtures set the cookie via
+  `context.addCookies`; `authenticatedApi`/`backendApi` send it as a `Cookie`
+  header; `finishTestMode`/`finish()` send no token (bootstrap endpoint).
+- **BREAKING — single-value env var.** `VIUR_TESTING=1` (or `true`/`on`) = on,
+  default namespace; any other value is the namespace verbatim
+  (`VIUR_TESTING=ak`). The former `<mode>[:<namespace>]` grammar and the
+  `test`/`dev` keywords are gone — `test`/`dev` are now ordinary namespace
+  names. `setup()` drops the `mode` parameter.
+- **BREAKING (npm) — Vite token plugin removed.** `viurTestingTokenFetch` /
+  `withTokenInjection` are gone; the dev-server proxy is now plain (the browser
+  carries the cookie). `vite` is no longer a peer/dev dependency of the package.
+  The scaffolded `vite.e2e.config.ts` is a plain proxy.
+- **Removed — tokenless dev mode.** The `dev` mode, `arm_tokenless_browsing`,
+  `setup(tokenless_app_ids=…)` and the PIN-at-boot path are gone — manual
+  browsing is the cookie flow above. Dev-Mirror **seeding** (`viur-mirror`) is
+  unchanged (still PIN-gated); boot `VIUR_TESTING=<namespace>` to work in your
+  slice.
+- **Unchanged** — the `ProductionGuardValidator` (still a tripwire on the legacy
+  `X-Viur-Test-Token` header), Datastore isolation, Guarded Mode.
+
+### Migration
+
+      # env var
+      VIUR_TESTING=test      → VIUR_TESTING=1
+      VIUR_TESTING=test:ak   → VIUR_TESTING=ak
+      VIUR_TESTING=dev:ak    → VIUR_TESTING=ak     # dev/tokenless gone
+
+      # main.py — drop the removed setup() kwargs
+      viur.testing.setup(tokenless_app_ids=[...])  → viur.testing.setup()
+
+      # regenerate the e2e scaffold (plain Vite proxy, no token injection)
+      npx viur-testing-init
+
+  Note: a leftover `VIUR_TESTING=test` now selects a **namespace named
+  "test"**, not "on, default namespace" — change it to `VIUR_TESTING=1`. To
+  browse the test instance by hand, navigate once to
+  `/_test/config/enter` (sets the cookie), then browse normally.
+
 ## [0.4.0] — 2026-06-16
 
 Combined Python + `@spltz/viur-testing` (npm) release. This version unifies
@@ -461,6 +511,7 @@ in:
    module instance is silently skipped. The host-side wiring
    registers `TestModule` as a *class*, not as an instance.
 
+[0.5.0]: https://github.com/sprengplatz/viur-testing/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/sprengplatz/viur-testing/compare/v0.3.0-npm...v0.4.0
 [0.3.0]: https://github.com/sprengplatz/viur-testing/releases/tag/v0.3.0-npm
 [0.2.0]: https://github.com/sprengplatz/viur-testing/releases/tag/v0.2.0

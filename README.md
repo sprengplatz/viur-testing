@@ -22,8 +22,8 @@ server **and** the runner agree they are talking to the test instance.
    the `TestModule` container and mounts `ConfigModule` directly is
    subject to the same checks, so a forgotten activate or a stray
    production mount fails loudly at boot.
-4. **Per-request token validator** (`X-Viur-Test-Token`) blocks every
-   request that does not carry the session token, except the two
+4. **Per-request token validator** (`viur-test-token` cookie) blocks every
+   request that does not carry the session token, except the
    bootstrap endpoints.
 5. **`protect()` installs a production-side header guard** that 403s
    any request carrying the test token header outside dev, regardless
@@ -129,7 +129,7 @@ The value is `<mode>[:<namespace>]` — `test` (or `1`/`true`/`on`),
 `test:<ns>`, or `dev:<ns>`; unset / `0` / `off` means off:
 
 ```sh
-VIUR_TESTING=test viur run
+VIUR_TESTING=1 viur run
 ```
 
 Without the env var (or with `off`), `setup()` skips `activate()` and
@@ -144,7 +144,7 @@ making it obvious that test mode is armed but namespace isolation is
 **not** in effect:
 
 ```
-# With VIUR_TESTING=test:alice
+# With VIUR_TESTING=alice
 ################## LOCAL DEVELOPMENT SERVER IS UP AND RUNNING ##################
 #                          project = my-viur-project                           #
 #                               python = 3.13.0                                #
@@ -153,7 +153,7 @@ making it obvious that test mode is armed but namespace isolation is
 #                              namespace = alice                               #
 ################################################################################
 
-# With VIUR_TESTING=test (no namespace)
+# With VIUR_TESTING=1 (no namespace)
 ################## LOCAL DEVELOPMENT SERVER IS UP AND RUNNING ##################
 #                          project = my-viur-project                           #
 #                               python = 3.13.0                                #
@@ -180,13 +180,13 @@ Boot each dev server with its own namespace:
 
 ```sh
 # Alice's machine
-VIUR_TESTING=test:alice viur run
+VIUR_TESTING=alice viur run
 
 # Bob's machine
-VIUR_TESTING=test:bob viur run
+VIUR_TESTING=bob viur run
 
 # CI for PR #42
-VIUR_TESTING=test:ci-pr-42 viur run
+VIUR_TESTING=ci-pr-42 viur run
 ```
 
 The runner-side `require_test_mode` can assert the expected namespace
@@ -199,10 +199,10 @@ to fail fast when somebody points at the wrong slice::
         expected_namespace="alice",  # omit to skip; pass None for default
     )
 
-The namespace part of `VIUR_TESTING` may be omitted (`VIUR_TESTING=test`)
-— that means "no namespace, use the Datastore default". This is the
-existing behaviour when no namespaces are needed (e.g. single-developer
-setup).
+`VIUR_TESTING=1` (or `true`/`on`) means "on, no namespace — use the
+Datastore default", the right choice for a single-developer setup. Any
+other value is the namespace verbatim (`VIUR_TESTING=ak` → namespace
+`ak`); there is no separator and no reserved names.
 
 ## Guarded Mode (Playwright only, since `@spltz/viur-testing` 0.3.0)
 
@@ -236,7 +236,7 @@ npx viur-testing-init
 ```
 
 The CLI asks interactively for the scaffold mode (Test Mode for a
-local dev server armed with `VIUR_TESTING=test`, Guarded Mode
+local dev server armed with `VIUR_TESTING=1`, Guarded Mode
 for tests against an already-deployed instance) and drops a working
 `package.json`, `tsconfig.json`, `playwright.config.ts`,
 `vite.e2e.config.ts`, `.env.e2e`, `.gitignore` and an example spec.
@@ -253,8 +253,8 @@ E2E_BACKEND_URL=http://localhost:8080 npm test
 
 The generated `playwright.config.ts` wires `createGlobalSetup()` /
 `createGlobalTeardown()` which probe `/_test/config/status` and pick
-the mode automatically. In Test Mode the fixtures inject
-`X-Viur-Test-Token` on every browser and APIRequestContext call; in
+the mode automatically. In Test Mode the fixtures set the
+`viur-test-token` cookie on the browser context and APIRequestContext; in
 Guarded Mode a 6-digit PIN gate appears on the terminal and specs
 that depend on `/_test/` infrastructure auto-skip.
 

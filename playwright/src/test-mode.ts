@@ -2,18 +2,17 @@
  * TypeScript wrappers for the viur-testing bootstrap endpoints.
  *
  * Mirrors the Python `viur.testing.require_test_mode` / `finish` helpers
- * over plain HTTP. These two calls are the ONLY ones in the suite that
- * may run without the `X-Viur-Test-Token` header — they live on the
- * server-side bootstrap allow-list. Every other request from Playwright
+ * over plain HTTP. These bootstrap calls run without any token — they live
+ * on the server-side allow-list. Every other request from Playwright
  * (browser navigation, fetch/XHR, APIRequestContext) MUST carry the
- * token; the fixtures in `fixtures.ts` enforce that.
+ * `viur-test-token` **cookie**; the fixtures in `fixtures.ts` set it.
  */
 
 import { createHash } from "node:crypto"
 
 import { request as playwrightRequest, type APIRequestContext } from "@playwright/test"
 
-export const TOKEN_HEADER = "X-Viur-Test-Token"
+export const TOKEN_COOKIE = "viur-test-token"
 
 export interface ServerStatus {
   test_mode: true
@@ -216,16 +215,11 @@ export async function requireTestMode(opts: RequireTestModeOptions): Promise<Ser
  * fresh token.
  *
  * The finish endpoint is on the bootstrap allow-list and therefore
- * accepts the call without a token header. We send the header
- * nonetheless so that the JS-side call shape matches the Python
- * `viur.testing.finish` (which always sends it) — protects against a
- * future allow-list narrowing on the server silently breaking
- * teardown only on the JS side.
+ * needs no token — the call carries neither header nor cookie.
  */
-export async function finishTestMode(opts: { backendUrl: string; token: string }): Promise<void> {
+export async function finishTestMode(opts: { backendUrl: string }): Promise<void> {
   const ctx = await playwrightRequest.newContext({
     baseURL: opts.backendUrl,
-    extraHTTPHeaders: { [TOKEN_HEADER]: opts.token },
   })
   try {
     const resp = await ctx.post("/json/_test/config/finish")
@@ -241,9 +235,11 @@ export async function finishTestMode(opts: { backendUrl: string; token: string }
 }
 
 /**
- * Build an APIRequestContext that always carries the test token. Use
- * this for any direct backend HTTP calls a test makes outside of the
- * browser (e.g. fixture helpers, seeding).
+ * Build an APIRequestContext that always carries the test-token cookie.
+ * Use this for any direct backend HTTP calls a test makes outside of the
+ * browser (e.g. fixture helpers, seeding). An APIRequestContext is a plain
+ * HTTP client (no browser cookie jar), so the cookie is sent via an
+ * explicit ``Cookie`` header — the backend parses it like any cookie.
  */
 export async function authenticatedApi(opts: {
   backendUrl: string
@@ -251,6 +247,6 @@ export async function authenticatedApi(opts: {
 }): Promise<APIRequestContext> {
   return playwrightRequest.newContext({
     baseURL: opts.backendUrl,
-    extraHTTPHeaders: { [TOKEN_HEADER]: opts.token },
+    extraHTTPHeaders: { Cookie: `${TOKEN_COOKIE}=${opts.token}` },
   })
 }

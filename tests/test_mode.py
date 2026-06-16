@@ -2,64 +2,34 @@
 
 import pytest
 
-from viur.testing.mode import (
-    MODE_DEV,
-    MODE_OFF,
-    MODE_TEST,
-    parse_spec,
-    validate_spec,
-)
+from viur.testing.mode import parse_spec
 
 
 @pytest.mark.parametrize(
     "value, expected",
     [
-        (None, (MODE_OFF, None)),
-        ("", (MODE_OFF, None)),
-        ("   ", (MODE_OFF, None)),
-        ("0", (MODE_OFF, None)),
-        ("off", (MODE_OFF, None)),
-        ("OFF", (MODE_OFF, None)),
-        ("false", (MODE_OFF, None)),
-        ("1", (MODE_TEST, None)),
-        ("true", (MODE_TEST, None)),
-        ("on", (MODE_TEST, None)),
-        ("test", (MODE_TEST, None)),
-        ("TEST", (MODE_TEST, None)),
-        ("test:ak", (MODE_TEST, "ak")),
-        (" test : ak ", (MODE_TEST, "ak")),
-        ("dev:ak", (MODE_DEV, "ak")),
-        ("DEV:AK", (MODE_DEV, "AK")),  # namespace stays case-sensitive
+        # off-values → disabled
+        (None, (False, None)),
+        ("", (False, None)),
+        ("   ", (False, None)),
+        ("0", (False, None)),
+        ("off", (False, None)),
+        ("OFF", (False, None)),
+        ("false", (False, None)),
+        # on-values → enabled, default namespace
+        ("1", (True, None)),
+        ("true", (True, None)),
+        ("on", (True, None)),
+        ("ON", (True, None)),
+        # anything else → enabled, namespace verbatim
+        ("ak", (True, "ak")),
+        (" ak ", (True, "ak")),  # surrounding whitespace stripped
+        ("Prod", (True, "Prod")),  # namespace stays case-sensitive
+        # former mode keywords are now ordinary namespace names
+        ("test", (True, "test")),
+        ("dev", (True, "dev")),
+        ("dev:ak", (True, "dev:ak")),  # no separator anymore — verbatim
     ],
 )
-def test_parse_spec_valid(value, expected):
+def test_parse_spec(value, expected):
     assert parse_spec(value) == expected
-
-
-@pytest.mark.parametrize(
-    "value",
-    [
-        "dev",        # dev requires a namespace
-        "dev:",       # empty namespace after colon
-        "test:",      # empty namespace after colon
-        ":ak",        # empty mode before colon
-        "foo",        # unknown mode keyword
-        "off:ak",     # off does not take a namespace
-    ],
-)
-def test_parse_spec_invalid(value):
-    with pytest.raises(ValueError):
-        parse_spec(value)
-
-
-def test_validate_spec_dev_requires_namespace():
-    with pytest.raises(ValueError):
-        validate_spec(MODE_DEV, None)
-
-
-def test_validate_spec_allows_dev_with_namespace():
-    validate_spec(MODE_DEV, "ak")  # no raise
-
-
-def test_validate_spec_allows_test_without_namespace():
-    validate_spec(MODE_TEST, None)  # no raise

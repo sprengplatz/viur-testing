@@ -30,8 +30,8 @@ provides the Playwright API and a stub generator.
 
 **npm package:**
 
-- Header injection for Vite applications.
-- PIN confirmation before start.
+- Cookie-based test-token transport (Playwright fixtures + APIRequestContext).
+- PIN confirmation before start (Guarded Mode).
 - Playwright patches that enforce the security mechanisms.
 - `init` tool to generate a stub.
 
@@ -47,8 +47,10 @@ provides the Playwright API and a stub generator.
 4. **Test API outside `deploy/`** — the project-specific test modules
    live outside the deploy folder and are therefore never shipped to
    production.
-5. **Per-request token `X-Viur-Test-Token`** — every request must carry
-   the negotiated token, otherwise it is rejected.
+5. **Per-request token cookie `viur-test-token`** — every request must
+   carry the negotiated token as a cookie (set once on the browser
+   context, or via `/_test/config/enter` for manual browsing), otherwise
+   it is rejected. The cookie rides along on hard navigations too.
 6. **Runner preflight** — `require_test_mode()` calls
    `/_test/config/status` and refuses to start tests if the server
    reports a different database, project id or token hash than expected.
@@ -62,6 +64,10 @@ provides the Playwright API and a stub generator.
   returns JSON `{test_mode, is_dev_server, database, project_id,
   token, token_hash, version}`. POST-only to block drive-by GETs
   from parallel browser tabs.
+- `GET /_test/config/enter` — sets the `viur-test-token` cookie
+  (`SameSite=Strict; HttpOnly; Path=/`) so you can browse the test
+  instance directly. Reached by a plain navigation; see
+  [Development Mode](dev-mirror-mode.md).
 - `POST /_test/config/finish` — deletes the token entity from the
   test database, ending the session.
 
@@ -96,7 +102,7 @@ from viur.testing import require_test_mode, finish
 
 status = require_test_mode("http://localhost:8080")
 try:
-    # run tests, sending X-Viur-Test-Token: status.token
+    # run tests; the viur-test-token cookie is set on the browser context
     ...
 finally:
     finish("http://localhost:8080", status.token)

@@ -7,8 +7,19 @@ and the runner-side helpers can pick them up without importing the
 transitively the default datastore client.
 """
 
+TOKEN_COOKIE = "viur-test-token"
+"""Cookie name that carries the session token — the canonical transport
+since 0.5.0. Set once on the client (Playwright ``addCookies`` in tests, or
+the ``/_test/config/enter`` endpoint for manual browsing) and then attached
+by the browser to **every** request, including hard navigations. The
+:class:`~viur.testing.validator.TokenValidator` reads the token from here."""
+
 TOKEN_HEADER = "X-Viur-Test-Token"
-"""Header name that callers must set on every non-bootstrap request."""
+"""Legacy header name. No longer a valid transport for the
+:class:`~viur.testing.validator.TokenValidator` (cookie-only since 0.5.0),
+but still the tripwire watched by
+:class:`~viur.testing.validator.ProductionGuardValidator`: any request
+carrying this header on a non-dev server is 403'd."""
 
 PROBE_KIND = "viur-test-probe"
 """Datastore kind used for the boot-time roundtrip probe.
@@ -30,13 +41,15 @@ TOKEN_PROPERTY = "token"
 DEFAULT_DATABASE = "viur-tests"
 """Name of the named Datastore database that holds the test data."""
 
-BOOTSTRAP_ACTIONS: frozenset[str] = frozenset({"status", "finish"})
+BOOTSTRAP_ACTIONS: frozenset[str] = frozenset({"status", "finish", "enter"})
 """Trailing path segments that may be reached without a session token.
 
 The status endpoint is what *issues* the token in the first place, so it
-must be reachable without one. The finish endpoint must stay reachable
-even after the token has been wiped, so the session can be cleanly torn
-down. Both endpoints re-verify dev-server + database themselves.
+must be reachable without one. The enter endpoint sets the token cookie for
+manual browsing and is reached by a plain GET navigation before any cookie
+exists. The finish endpoint must stay reachable even after the token has
+been wiped, so the session can be cleanly torn down. All three re-verify
+dev-server + database themselves.
 
 The validator (:func:`viur.testing.validator._is_bootstrap_path`) accepts
 exactly ``/<renderer>?/_test/config/<action>`` paths where ``<action>``

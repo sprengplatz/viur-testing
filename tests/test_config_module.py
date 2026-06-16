@@ -217,48 +217,73 @@ def test_reset_clears_everything():
 
 
 # ---------------------------------------------------------------------------
-# Dev-Mirror tokenless state
+# enter() — cookie transport for manual browsing
 # ---------------------------------------------------------------------------
 
 
-def test_arm_tokenless_allows_when_project_whitelisted_and_namespaced():
-    ConfigModule.set_active(database="viur-tests", project_id="p", namespace="ak")
-    ConfigModule.arm_tokenless(["p"])
-    assert ConfigModule.tokenless_allowed() is True
+def _handler_response():
+    import sys as _sys
+    return _sys.modules["viur.core.current"].request.get().response
 
 
-def test_tokenless_not_allowed_when_not_armed():
-    ConfigModule.set_active(database="viur-tests", project_id="p", namespace="ak")
-    assert ConfigModule.tokenless_allowed() is False
+def test_enter_sets_token_cookie_and_returns_html(client_active):
+    module = ConfigModule(moduleName="config", modulePath="_test/config")
+    body = module.enter()
+
+    # In-process token primed + persisted.
+    token = ConfigModule.current_token()
+    assert isinstance(token, str) and token
+    key = _FakeKey("viur-tests", "auth-token")
+    assert client_active._store[key]["token"] == token
+
+    # Cookie set with the right name + hardening flags.
+    response = _handler_response()
+    assert len(response.cookies_set) == 1
+    name, value, kwargs = response.cookies_set[0]
+    assert name == "viur-test-token"
+    assert value == token
+    assert kwargs["samesite"] == "Strict"
+    assert kwargs["httponly"] is True
+    assert kwargs["path"] == "/"
+    assert kwargs["secure"] is False  # http dev server
+
+    # HTML confirmation body + content type.
+    assert "<!doctype html>" in body.lower()
+    assert response.headers["Content-Type"].startswith("text/html")
 
 
-def test_tokenless_not_allowed_when_project_id_unknown():
-    # armed but never activated → _project_id is None
-    ConfigModule.arm_tokenless(["p"])
-    assert ConfigModule.tokenless_allowed() is False
+def test_enter_marks_secure_cookie_on_https(client_active):
+    import sys as _sys
+    handler = _sys.modules["viur.core.current"].request.get()
+    handler.request.scheme = "https"
+
+    module = ConfigModule(moduleName="config", modulePath="_test/config")
+    module.enter()
+    _, _, kwargs = _handler_response().cookies_set[0]
+    assert kwargs["secure"] is True
 
 
-def test_tokenless_not_allowed_when_project_not_whitelisted():
-    ConfigModule.set_active(database="viur-tests", project_id="p", namespace="ak")
-    ConfigModule.arm_tokenless(["other"])
-    assert ConfigModule.tokenless_allowed() is False
+def test_enter_is_idempotent(client_active):
+    module = ConfigModule(moduleName="config", modulePath="_test/config")
+    module.enter()
+    first = ConfigModule.current_token()
+    module.enter()
+    assert ConfigModule.current_token() == first
 
 
-def test_tokenless_allowed_without_namespace():
-    # Managed/default-NS model: the seed lands in viur-tests' default
-    # namespace, so tokenless does NOT require a per-developer namespace.
-    ConfigModule.set_active(database="viur-tests", project_id="p")  # no namespace
-    ConfigModule.arm_tokenless(["p"])
-    assert ConfigModule.tokenless_allowed() is True
+def test_enter_refuses_when_dev_server_is_false(client_active, conf_instance):
+    module = ConfigModule(moduleName="config", modulePath="_test/config")
+    conf_instance.is_dev_server = False
+    from viur.core.errors import Forbidden
+
+    with pytest.raises(Forbidden, match="dev mode"):
+        module.enter()
 
 
-def test_reset_clears_tokenless_state():
-    ConfigModule.set_active(database="viur-tests", project_id="p", namespace="ak")
-    ConfigModule.arm_tokenless(["p"])
-    ConfigModule.reset()
-    assert ConfigModule._tokenless_armed is False
-    assert ConfigModule._tokenless_app_ids == ()
-    assert ConfigModule.tokenless_allowed() is False
+def test_enter_is_exposed_but_not_post_only():
+    """enter() is reached by GET navigation, so it must NOT be force_post."""
+    assert getattr(ConfigModule.enter, "exposed", False) is True
+    assert getattr(ConfigModule.enter, "force_post", False) is False
 
 
 # ---------------------------------------------------------------------------
@@ -460,6 +485,10 @@ def test_finish_deletes_token_from_db(client_active):
     assert key not in client_active._store
     assert ConfigModule.has_token() is False
     assert ConfigModule.is_active() is True
+
+    # The token cookie is expired on finish.
+    response = _handler_response()
+    assert any(name == "viur-test-token" for name, _ in response.cookies_deleted)
 
 
 def test_finish_reports_no_token_when_nothing_to_delete(client_active):

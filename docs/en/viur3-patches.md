@@ -79,13 +79,17 @@ detected at runtime, so a future viur-core banner change degrades gracefully.
 Two validators are appended to the router's class-level list:
 
 - **`TokenValidator`** — installed by `activate()` (dev/test). Rejects every
-  non-bootstrap request that lacks a matching `X-Viur-Test-Token` header
-  (constant-time compare). The `/_test/config/status` + `/_test/config/finish`
-  bootstrap paths bypass it so the runner can open a session before one exists.
+  non-bootstrap request that lacks a matching `viur-test-token` cookie
+  (constant-time compare). The `/_test/config/status`, `/_test/config/enter`
+  and `/_test/config/finish` bootstrap paths bypass it so the runner (and the
+  manual-browse navigation) can open a session before a cookie exists.
 - **`ProductionGuardValidator`** — installed by `protect()` in **every**
-  environment. On a non-dev server it 403s any request carrying the test-token
-  header, regardless of value; in dev it is a no-op (the `TokenValidator` owns
-  the header). See [Validators](api/validator.md).
+  environment, and still watches the legacy `X-Viur-Test-Token` **header** as a
+  tripwire: on a non-dev server it 403s any request carrying that header,
+  regardless of value; in dev it is a no-op. The header is no longer a valid
+  transport (the `TokenValidator` reads the cookie), so the guard purely
+  catches a stray copy-pasted header hitting production. See
+  [Validators](api/validator.md).
 
 Both registrations are membership-checked, so calling them twice is a no-op.
 

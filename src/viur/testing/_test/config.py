@@ -30,6 +30,7 @@ from viur.core.decorators import exposed, force_post
 from viur.core.errors import Forbidden
 
 from ..constants import (
+    TOKEN_COOKIE,
     TOKEN_ENTITY_NAME,
     TOKEN_KIND,
     TOKEN_PROPERTY,
@@ -101,11 +102,6 @@ class ConfigModule(Module):
     _status_hooks: t.ClassVar[list[t.Callable[[], dict | None]]] = []
     _finish_hooks: t.ClassVar[list[t.Callable[[], dict | None]]] = []
 
-    # Dev-Mirror tokenless-browsing state (set by
-    # :func:`viur.testing.mirror.arm_tokenless_browsing` after the PIN).
-    _tokenless_armed: t.ClassVar[bool] = False
-    _tokenless_app_ids: t.ClassVar[tuple[str, ...]] = ()
-
     @classmethod
     def is_active(cls) -> bool:
         """Whether :func:`viur.testing.activate` has wired the process."""
@@ -115,38 +111,6 @@ class ConfigModule(Module):
     def has_token(cls) -> bool:
         """Whether a session is currently established (a token is issued)."""
         return cls._token is not None
-
-    @classmethod
-    def arm_tokenless(cls, app_ids: t.Iterable[str]) -> None:
-        """Enable Dev-Mirror tokenless browsing for this process.
-
-        Called by :func:`viur.testing.mirror.arm_tokenless_browsing` once the
-        PIN is confirmed. The per-request gate (:meth:`tokenless_allowed`)
-        still requires the running project to be in ``app_ids``; the validator
-        layers ``is_dev_server`` on top.
-        """
-        cls._tokenless_armed = True
-        cls._tokenless_app_ids = tuple(app_ids)
-
-    @classmethod
-    def tokenless_allowed(cls) -> bool:
-        """Whether a request may skip the token header (Dev-Mirror).
-
-        ``True`` only when tokenless was armed (a PIN-confirmed dev boot) and
-        the active project is in the whitelist. The open slice is the
-        ``viur-tests`` database the process is wired to — never ``(default)``.
-        :class:`~viur.testing.validator.TokenValidator` additionally requires
-        ``conf.instance.is_dev_server`` per request.
-
-        Note: the ``viur-mirror`` copy lands in a per-developer **namespace**
-        of ``viur-tests``. For the developer to see their slice, the dev-server
-        process must be wired to that same database **and** namespace.
-        """
-        return (
-            cls._tokenless_armed
-            and cls._project_id is not None
-            and cls._project_id in cls._tokenless_app_ids
-        )
 
     @classmethod
     def current_database(cls) -> str | None:
@@ -257,8 +221,6 @@ class ConfigModule(Module):
         cls._token = None
         cls._status_hooks = []
         cls._finish_hooks = []
-        cls._tokenless_armed = False
-        cls._tokenless_app_ids = ()
 
     # ----- private helpers --------------------------------------------------
 
@@ -335,6 +297,42 @@ class ConfigModule(Module):
         current.request.get().response.headers["Content-Type"] = "application/json"
         return json.dumps(payload)
 
+    @staticmethod
+    def _set_token_cookie(token: str) -> None:
+        """Set the session token as a ``viur-test-token`` cookie.
+
+        ``SameSite=Strict; HttpOnly; Path=/`` — ``Secure`` only on HTTPS so
+        it still works on a plain-HTTP ``http://localhost`` dev server. The
+        cookie is the canonical transport: once set, the browser attaches it
+        to every request, including hard navigations.
+        """
+        handler = current.request.get()
+        secure = getattr(handler.request, "scheme", "http") == "https"
+        handler.response.set_cookie(
+            TOKEN_COOKIE,
+            token,
+            path="/",
+            secure=secure,
+            httponly=True,
+            samesite="Strict",
+        )
+
+    @staticmethod
+    def _clear_token_cookie() -> None:
+        """Expire the ``viur-test-token`` cookie (used by ``finish``)."""
+        handler = current.request.get()
+        handler.response.delete_cookie(TOKEN_COOKIE, path="/")
+
+    @staticmethod
+    def _enter_confirmation_html() -> str:
+        """Minimal HTML body for the ``enter`` GET navigation."""
+        current.request.get().response.headers["Content-Type"] = "text/html; charset=utf-8"
+        return (
+            "<!doctype html><meta charset=utf-8><title>viur-testing</title>"
+            "<p>Test session armed — the <code>viur-test-token</code> cookie is set. "
+            "You can now browse the test instance directly.</p>"
+        )
+
     @exposed
     @force_post
     def status(self) -> str:
@@ -373,18 +371,44 @@ class ConfigModule(Module):
         return self._json_response(payload)
 
     @exposed
+    def enter(self) -> str:
+        """Arm a manual browsing session by setting the token cookie.
+
+        Reached by a plain **GET** navigation (address bar, link, reload)
+        before any cookie exists — hence a bootstrap path. Reads/creates the
+        session token, primes the in-process state, and sets the
+        ``viur-test-token`` cookie. Afterwards every request the browser makes
+        — including hard navigations and server-rendered pages — carries the
+        cookie, so the developer can browse the test instance directly without
+        a header-injecting proxy or browser extension.
+
+        GET (not POST) on purpose: you navigate to it. A cross-site drive-by
+        could trigger it, but the resulting cookie is ``SameSite=Strict`` and
+        scoped to this (dev-only, localhost) host, so it cannot be used from
+        another site — see the security note in the README.
+        """
+        cls = type(self)
+        cls._require_runtime_consistency()
+        token = cls._read_or_create_token()
+        cls.set_token(token)
+        cls._set_token_cookie(token)
+        return self._enter_confirmation_html()
+
+    @exposed
     @force_post
     def finish(self) -> str:
         """End the current test session.
 
-        Deletes the token entity from the test database and clears the
-        in-process token. Test-mode itself stays armed — the next call
-        to :meth:`status` will provision a fresh token.
+        Deletes the token entity from the test database, clears the
+        in-process token and expires the cookie. Test-mode itself stays
+        armed — the next call to :meth:`status`/:meth:`enter` will provision
+        a fresh token.
         """
         cls = type(self)
         cls._require_runtime_consistency()
         existed = cls._delete_token()
         cls.clear_token()
+        cls._clear_token_cookie()
 
         payload: dict = {"finished": True, "had_token": existed}
         for hook in cls._finish_hooks:

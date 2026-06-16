@@ -4,14 +4,19 @@ import types
 
 import pytest
 
-from viur.testing.constants import TOKEN_HEADER
+from viur.testing.constants import TOKEN_COOKIE, TOKEN_HEADER
 from viur.testing._test.config import ConfigModule
 from viur.testing.validator import ProductionGuardValidator, TokenValidator
 
 
-def _make_request(headers: dict | None = None, path: str = "/some/route"):
+def _make_request(
+    cookies: dict | None = None,
+    headers: dict | None = None,
+    path: str = "/some/route",
+):
     return types.SimpleNamespace(
         request=types.SimpleNamespace(
+            cookies=cookies or {},
             headers=headers or {},
             path=path,
         ),
@@ -25,9 +30,14 @@ def _reset_test_module_state():
     ConfigModule.reset()
 
 
-def test_token_header_constant_is_renamed():
-    """Header name must no longer carry 'E2E'."""
+def test_token_constants():
+    assert TOKEN_COOKIE == "viur-test-token"
     assert TOKEN_HEADER == "X-Viur-Test-Token"
+
+
+# ---------------------------------------------------------------------------
+# TokenValidator — cookie transport
+# ---------------------------------------------------------------------------
 
 
 def test_validate_returns_403_when_state_inactive():
@@ -40,17 +50,17 @@ def test_validate_returns_403_when_state_inactive():
 def test_validate_returns_403_when_no_token_issued_yet():
     ConfigModule.set_active(database="viur-tests", project_id="p")
     result = TokenValidator.validate(
-        _make_request(headers={TOKEN_HEADER: "anything"})
+        _make_request(cookies={TOKEN_COOKIE: "anything"})
     )
     assert result is not None
     assert result[0] == 403
     assert "no session token" in result[2]
 
 
-def test_validate_returns_403_when_header_missing():
+def test_validate_returns_403_when_cookie_missing():
     ConfigModule.set_active(database="viur-tests", project_id="p")
     ConfigModule.set_token("secret")
-    result = TokenValidator.validate(_make_request(headers={}))
+    result = TokenValidator.validate(_make_request(cookies={}))
     assert result is not None
     assert result[0] == 403
     assert "missing" in result[2].lower()
@@ -60,57 +70,48 @@ def test_validate_returns_403_when_token_wrong():
     ConfigModule.set_active(database="viur-tests", project_id="p")
     ConfigModule.set_token("secret")
     result = TokenValidator.validate(
-        _make_request(headers={TOKEN_HEADER: "nope"})
+        _make_request(cookies={TOKEN_COOKIE: "nope"})
     )
     assert result is not None
     assert result[0] == 403
     assert "invalid" in result[2].lower()
 
 
-def test_validate_passes_with_correct_token():
+def test_validate_passes_with_correct_cookie():
     ConfigModule.set_active(database="viur-tests", project_id="p")
     ConfigModule.set_token("secret")
     result = TokenValidator.validate(
-        _make_request(headers={TOKEN_HEADER: "secret"})
+        _make_request(cookies={TOKEN_COOKIE: "secret"})
     )
     assert result is None
 
 
-def test_validate_tokenless_allows_without_token_in_dev(conf_instance):
-    """Dev-Mirror tokenless: armed + whitelisted + namespaced + dev server →
-    any request passes without a token header."""
-    conf_instance.is_dev_server = True
-    ConfigModule.set_active(database="viur-tests", project_id="p", namespace="ak")
-    ConfigModule.arm_tokenless(["p"])
-    result = TokenValidator.validate(_make_request(headers={}))
-    assert result is None
-
-
-def test_validate_tokenless_still_requires_token_outside_dev(conf_instance):
-    """Even when tokenless is armed, a non-dev process must NOT open up — the
-    validator re-checks is_dev_server and falls back to the token path."""
-    conf_instance.is_dev_server = False
-    ConfigModule.set_active(database="viur-tests", project_id="p", namespace="ak")
+def test_validate_ignores_header_transport():
+    """The header is no longer a valid transport — only the cookie counts."""
+    ConfigModule.set_active(database="viur-tests", project_id="p")
     ConfigModule.set_token("secret")
-    ConfigModule.arm_tokenless(["p"])
-    result = TokenValidator.validate(_make_request(headers={}))
+    result = TokenValidator.validate(
+        _make_request(headers={TOKEN_HEADER: "secret"}, cookies={})
+    )
     assert result is not None
-    assert result[0] == 403  # missing token — tokenless bypass did not fire
+    assert result[0] == 403
 
 
 @pytest.mark.parametrize(
     "path",
     [
         "/_test/config/status",
+        "/_test/config/enter",
         "/_test/config/finish",
         "/json/_test/config/status",
         "/html/_test/config/finish",
+        "/vi/_test/config/enter",
     ],
 )
 def test_validate_bypasses_bootstrap_paths_without_token(path):
-    """Status + finish must be reachable even before a token exists."""
+    """status / enter / finish must be reachable even before a token exists."""
     ConfigModule.set_active(database="viur-tests", project_id="p")
-    result = TokenValidator.validate(_make_request(headers={}, path=path))
+    result = TokenValidator.validate(_make_request(cookies={}, path=path))
     assert result is None
 
 
@@ -122,7 +123,7 @@ def test_validate_bypasses_status_when_state_active_and_no_token():
     """
     ConfigModule.set_active(database="viur-tests", project_id="p")
     result = TokenValidator.validate(
-        _make_request(headers={}, path="/_test/config/status")
+        _make_request(cookies={}, path="/_test/config/status")
     )
     assert result is None
 
@@ -131,7 +132,7 @@ def test_validate_does_not_bypass_lookalike_paths():
     """Suffix match must not match a path that just happens to end in /status."""
     ConfigModule.set_active(database="viur-tests", project_id="p")
     result = TokenValidator.validate(
-        _make_request(headers={}, path="/api/status")
+        _make_request(cookies={}, path="/api/status")
     )
     assert result is not None
     assert result[0] == 403
@@ -140,22 +141,14 @@ def test_validate_does_not_bypass_lookalike_paths():
 @pytest.mark.parametrize(
     "path",
     [
-        # Deeper than 4 segments — even though the trailing chunk
-        # matches, a non-renderer first segment plus a normal
-        # ``_test/config/status`` further down was previously accepted
-        # by the suffix-endswith implementation. Now refused.
         "/a/b/_test/config/status",
         "/a/b/c/_test/config/finish",
-        # Trailing extra segment after the action.
         "/_test/config/status/extra",
         "/json/_test/config/finish/extra",
-        # Wrong action.
         "/_test/config/teardown",
         "/json/_test/config/foo",
-        # Wrong middle segment.
         "/_test/configX/status",
         "/json/_test/configX/status",
-        # Wrong _test segment.
         "/_testX/config/status",
     ],
 )
@@ -164,7 +157,7 @@ def test_validate_does_not_bypass_oddly_shaped_paths(path):
     or ``/<renderer>/_test/config/<action>`` bypass the token. Anything
     else must take the token-checked path."""
     ConfigModule.set_active(database="viur-tests", project_id="p")
-    result = TokenValidator.validate(_make_request(headers={}, path=path))
+    result = TokenValidator.validate(_make_request(cookies={}, path=path))
     assert result is not None
     assert result[0] == 403
 
@@ -174,7 +167,7 @@ def test_validate_does_not_bypass_falsy_path(path):
     ConfigModule.set_active(database="viur-tests", project_id="p")
     ConfigModule.set_token("secret")
     result = TokenValidator.validate(
-        _make_request(headers={TOKEN_HEADER: "secret"}, path=path)
+        _make_request(cookies={TOKEN_COOKIE: "secret"}, path=path)
     )
     assert result is None  # token still matched, just not via bypass
 
@@ -193,12 +186,12 @@ def test_validate_uses_constant_time_compare(monkeypatch):
         return real(a, b)
 
     monkeypatch.setattr("viur.testing.validator.hmac.compare_digest", spy)
-    TokenValidator.validate(_make_request(headers={TOKEN_HEADER: "secret"}))
+    TokenValidator.validate(_make_request(cookies={TOKEN_COOKIE: "secret"}))
     assert calls == [("secret", "secret")]
 
 
 # ---------------------------------------------------------------------------
-# ProductionGuardValidator
+# ProductionGuardValidator — still a header tripwire (unchanged)
 # ---------------------------------------------------------------------------
 
 
@@ -235,11 +228,7 @@ def test_production_guard_rejects_header_in_prod(conf_instance):
 
 
 def test_production_guard_rejects_header_regardless_of_value(conf_instance):
-    """Even an empty-string value with the header present should pass through."""
     conf_instance.is_dev_server = False
-    # Note: getheader("...") returns the value; "" is falsy, so absent-equivalent
-    # for our `if not header` short-circuit. That's intentional — only the
-    # presence of a non-empty value is suspicious enough to block.
     for value in ["x", "fake-token", "a" * 200, "../etc/passwd"]:
         result = ProductionGuardValidator.validate(
             _make_request(headers={TOKEN_HEADER: value})

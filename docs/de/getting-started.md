@@ -11,7 +11,7 @@ PIN-Eingabe startet — und damit der einzige, der sich in CI/CD automatisiert
 einsetzen lässt.
 
 Einschränkung: Reguläre Requests, etwa aus dem Admin, werden abgewiesen, da sie
-keinen gültigen `X-Viur-Test-Token` mitsenden.
+keinen gültigen `viur-test-token` cookie mitsenden.
 
 ## Voraussetzungen
 
@@ -78,7 +78,7 @@ viur.testing.register_modules(globals())
 ## Den Dev-Server im Test-Modus starten
 
 ```bash
-VIUR_TESTING=test viur run develop
+VIUR_TESTING=1 viur run develop
 ```
 
 Beim ersten Boot solltest du im Log sehen:

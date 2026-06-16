@@ -31,8 +31,8 @@ die Playwright-API sowie einen Stub-Generator.
 
 **npm-Package:**
 
-- Header-Injection für Vite-Anwendungen.
-- PIN-Bestätigung vor dem Start.
+- Cookie-basierter Token-Transport (Playwright-Fixtures + APIRequestContext).
+- PIN-Bestätigung vor dem Start (Guarded-Modus).
 - Playwright-Patches zum Erzwingen der Sicherheitsmechanismen.
 - `init`-Tool zum Erzeugen eines Stubs.
 
@@ -49,8 +49,10 @@ die Playwright-API sowie einen Stub-Generator.
 4. **Test-API außerhalb von `deploy/`** – die projektspezifischen
    Test-Module liegen außerhalb des Deploy-Ordners und werden damit nie
    in die Produktion ausgeliefert.
-5. **Pro-Anfrage-Token `X-Viur-Test-Token`** – jede Anfrage muss den
-   ausgehandelten Token mitführen, sonst wird sie abgewiesen.
+5. **Pro-Anfrage-Token-Cookie `viur-test-token`** – jede Anfrage muss den
+   ausgehandelten Token als Cookie mitführen (einmal am Browser-Context
+   gesetzt, oder über `/_test/config/enter` fürs manuelle Browsen), sonst
+   wird sie abgewiesen. Das Cookie fährt auch bei harter Navigation mit.
 6. **Runner-Preflight** – `require_test_mode()` ruft
    `/_test/config/status` auf und verweigert den Teststart, wenn der
    Server eine andere Datenbank, Projekt-ID oder einen anderen
@@ -65,6 +67,10 @@ die Playwright-API sowie einen Stub-Generator.
   Dev-Server + Datenbank und liefert JSON `{test_mode, is_dev_server,
   database, project_id, token, token_hash, version}`. Nur per POST, um
   Drive-by-GETs aus parallelen Browser-Tabs zu blockieren.
+- `GET /_test/config/enter` – setzt das `viur-test-token`-Cookie
+  (`SameSite=Strict; HttpOnly; Path=/`), damit du die Test-Instanz direkt
+  browsen kannst. Per einfacher Navigation erreichbar; siehe
+  [Development-Modus](dev-mirror-mode.md).
 - `POST /_test/config/finish` – löscht die Token-Entity aus der
   Test-Datenbank und beendet damit die Session.
 
@@ -99,7 +105,7 @@ from viur.testing import require_test_mode, finish
 
 status = require_test_mode("http://localhost:8080")
 try:
-    # run tests, sending X-Viur-Test-Token: status.token
+    # run tests; the viur-test-token cookie is set on the browser context
     ...
 finally:
     finish("http://localhost:8080", status.token)

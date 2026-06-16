@@ -27,7 +27,7 @@ import typing as t
 import urllib.error
 import urllib.request
 
-from .constants import DEFAULT_DATABASE, TOKEN_HEADER
+from .constants import DEFAULT_DATABASE
 
 
 class TestModePreflightError(RuntimeError):
@@ -92,13 +92,10 @@ def _build_status_request(base_url: str) -> urllib.request.Request:
     )
 
 
-def _build_finish_request(base_url: str, token: str) -> urllib.request.Request:
+def _build_finish_request(base_url: str) -> urllib.request.Request:
     return urllib.request.Request(
         base_url.rstrip("/") + "/json/_test/config/finish",
-        headers={
-            "Accept": "application/json",
-            TOKEN_HEADER: token,
-        },
+        headers={"Accept": "application/json"},
         method="POST",
         data=b"",
     )
@@ -192,19 +189,23 @@ def require_test_mode(
 
 def finish(
     base_url: str,
-    token: str,
+    token: str | None = None,
     *,
     timeout: float = 5.0,
     _opener: t.Callable[[urllib.request.Request, float], t.Any] | None = None,
 ) -> dict:
     """End the session: tell the server to delete the token entity.
 
+    ``/_test/config/finish`` is a bootstrap endpoint that deletes the
+    singleton token entity, so it needs no credential of its own — the
+    ``token`` argument is accepted for call-site compatibility but ignored.
+
     :param base_url: Origin of the server under test.
-    :param token: Session token as returned by :func:`require_test_mode`.
+    :param token: Ignored (kept for backwards compatibility).
     :param timeout: HTTP timeout in seconds.
     :param _opener: Injection seam for tests.
     :returns: The parsed JSON response
         (``{"finished": True, "had_token": ...}``).
     :raises TestModePreflightError: on transport errors or non-2xx responses.
     """
-    return _do_request(_build_finish_request(base_url, token), timeout, _opener)
+    return _do_request(_build_finish_request(base_url), timeout, _opener)

@@ -5,9 +5,9 @@
  * Re-runnable — already-existing files are skipped, never overwritten.
  *
  * Scaffolds a single **test-mode** suite: the backend is a local dev
- * server armed with ``VIUR_TESTING=test``. The generated files include
- * a Vite-proxy config that turns the dev server into a transparent
- * test-mode adapter, plus an example spec that consumes the
+ * server armed with ``VIUR_TESTING=1``. The generated files include
+ * a plain Vite-proxy config (the test token rides as a cookie, so no
+ * header injection is needed), plus an example spec that consumes the
  * ``serverStatus`` fixture.
  *
  * The entry point lives in `bin/init.mjs` (a tiny shebang wrapper)
@@ -167,26 +167,19 @@ export default defineConfig({
 `,
 
   "vite.e2e.config.ts": `/**
- * Vite config for the e2e test setup. Stands alone — works out of the
- * box for a backend-only proxy. If your project also has a Vite
- * frontend whose own vite.config you want to layer on top, follow the
- * "OVERLAY" TODO at the bottom of this file.
+ * Vite config for the e2e test setup. A plain dev-server proxy: it boots
+ * Vite on :8081 and forwards the standard ViUR routes to the backend on
+ * :8080. The test token rides as a \`viur-test-token\` cookie (set by the
+ * Playwright fixtures, and by /_test/config/enter for manual browsing),
+ * so the proxy no longer injects anything — it just routes.
  *
- * What this config does:
- *
- *   - envDir set to this directory so .env.e2e applies
- *   - viurTestingTokenFetch plugin: caches the test session token at
- *     server start, refreshes on observed 403s and on TTL expiry
- *   - withTokenInjection proxy entries: stamp X-Viur-Test-Token on
- *     every forwarded request, so the dev server is a transparent
- *     test-mode adapter for the backend
+ * If your project also has a Vite frontend whose own vite.config you want
+ * to layer on top, follow the "OVERLAY" TODO at the bottom.
  */
 
 import { defineConfig, type UserConfig } from "vite"
 import { dirname } from "node:path"
 import { fileURLToPath } from "node:url"
-
-import { viurTestingTokenFetch, withTokenInjection } from "@spltz/viur-testing"
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
@@ -195,16 +188,14 @@ const BACKEND = "http://localhost:8080"
 
 const e2eConfig: UserConfig = {
   envDir: __dirname,
-  plugins: [viurTestingTokenFetch({ backendUrl: BACKEND })],
   server: {
     port: 8081,
     proxy: {
-      // TODO: keep the routes that match your backend's actual mount
-      // points. Anything you remove will not get the test-token
-      // header injected and will 403 from viur-testing's
-      // TokenValidator.
-      "/vi/": withTokenInjection(BACKEND),
-      "/json": withTokenInjection(BACKEND),
+      // Plain pass-through — the browser carries the viur-test-token
+      // cookie, so nothing needs to be injected here. Keep the routes
+      // that match your backend's actual mount points.
+      "/vi/": { target: BACKEND, changeOrigin: false },
+      "/json": { target: BACKEND, changeOrigin: false },
       "/static": { target: BACKEND, changeOrigin: false },
       "/resources": { target: BACKEND, changeOrigin: false },
     },
@@ -229,17 +220,17 @@ export default defineConfig(e2eConfig)
 
   ".env.e2e": `# Vite env loaded when vite is started with \`--mode e2e --config vite.e2e.config.ts\`.
 #
-# VITE_API_URL pointed at the Vite dev server itself (NOT the backend)
-# so the @viur/vue-utils Request wrapper prepends this to relative
-# paths — every call lands on :8081 first, where the e2e Vite config's
-# proxy forwards it to the backend with the X-Viur-Test-Token header
-# attached. Single origin in the browser → no CORS preflight.
+# VITE_API_URL points at the Vite dev server itself (NOT the backend) so the
+# @viur/vue-utils Request wrapper prepends this to relative paths — every call
+# lands on :8081 first, where the e2e Vite config's proxy forwards it to the
+# backend. The browser carries the viur-test-token cookie, so a single origin
+# is all you need — no header injection, no CORS preflight.
 VITE_API_URL="http://localhost:8081"
 `,
 
   "tests/example.spec.ts": `/**
  * example.spec.ts — minimal smoke test to verify the scaffolding works
- * in TEST MODE (backend armed with VIUR_TESTING=test).
+ * in TEST MODE (backend armed with VIUR_TESTING=1).
  *
  * Delete this file once you have a real test suite.
  */
@@ -268,7 +259,7 @@ const API_TEMPLATES: Record<string, string> = {
   "../api/__init__.py": `"""Project-specific test API extensions.
 
 Python modules placed here are picked up by viur-testing and exposed under
-\`/json/_test/...\` when the server runs in test mode (\`VIUR_TESTING=test\`).
+\`/json/_test/...\` when the server runs in test mode (\`VIUR_TESTING=1\`).
 
 Use this to:
 - seed test data (users, dealers, articles, carts) from a known state
@@ -487,7 +478,7 @@ export async function initProject(opts: InitOptions = {}): Promise<void> {
     console.log("Next steps:")
     console.log("  1. Adjust the TODO markers in `vite.e2e.config.ts`.")
     console.log("  2. Run `npm install`.")
-    console.log("  3. Boot your backend with `VIUR_TESTING=test viur run`.")
+    console.log("  3. Boot your backend with `VIUR_TESTING=1 viur run`.")
     console.log("  4. `npm test`.")
   }
 }

@@ -253,14 +253,23 @@ def test_version_defaults_to_unknown():
 # ---------------------------------------------------------------------------
 
 
-def test_finish_posts_with_token_header():
+def test_finish_posts_without_token():
+    """finish is a bootstrap endpoint — it sends no token (no header, no cookie)."""
     opener, captured = _stub_opener({"finished": True, "had_token": True})
-    result = runner.finish("http://localhost:8080", "tok", _opener=opener)
+    result = runner.finish("http://localhost:8080", _opener=opener)
     assert result == {"finished": True, "had_token": True}
     assert captured["url"] == "http://localhost:8080/json/_test/config/finish"
     assert captured["method"] == "POST"
     headers = {k.lower(): v for k, v in captured["headers"].items()}
-    assert headers["x-viur-test-token"] == "tok"
+    assert "x-viur-test-token" not in headers
+
+
+def test_finish_ignores_optional_token_argument():
+    """The token arg is accepted for call-site compat but not transmitted."""
+    opener, captured = _stub_opener({"finished": True, "had_token": False})
+    runner.finish("http://localhost:8080", "ignored-token", _opener=opener)
+    headers = {k.lower(): v for k, v in captured["headers"].items()}
+    assert "x-viur-test-token" not in headers
 
 
 def test_finish_propagates_http_errors():

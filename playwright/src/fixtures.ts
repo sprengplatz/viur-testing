@@ -1,14 +1,15 @@
 /**
- * Custom Playwright `test` extension that injects the viur-testing
- * token header into every request — in **Test Mode**.
+ * Custom Playwright `test` extension that sets the viur-testing token
+ * cookie on the browsing context — in **Test Mode**.
  *
  * Two layers:
  *
  * 1. `context` — the browser context all `page.goto` / fetch / XHR
- *    calls from inside the page flow through. In Test Mode it is
- *    born with ``extraHTTPHeaders: { 'X-Viur-Test-Token': <token> }``;
- *    in Guarded Mode it is a vanilla browser context (no extra
- *    headers, no injection — Playwright acts as a normal client).
+ *    calls from inside the page flow through. In Test Mode the
+ *    ``viur-test-token`` cookie is set on it once, so it rides along on
+ *    every request including hard navigations; in Guarded Mode it is a
+ *    vanilla browser context (no cookie — Playwright acts as a normal
+ *    client).
  *
  * 2. `backendApi` — APIRequestContext for direct HTTP calls from the
  *    test code itself. Test-mode only — in Guarded Mode the
@@ -27,7 +28,7 @@ import { test as base, expect, type APIRequestContext, type BrowserContext } fro
 import { readFileSync } from "node:fs"
 
 import { MODE_ENV_VAR } from "./global-setup.js"
-import { TOKEN_HEADER, authenticatedApi, type ServerStatus } from "./test-mode.js"
+import { TOKEN_COOKIE, authenticatedApi, type ServerStatus } from "./test-mode.js"
 import { tokenFilePath } from "./token-storage.js"
 
 function loadServerStatus(): ServerStatus {
@@ -86,16 +87,28 @@ export const test = base.extend<TestModeFixtures, TestModeWorkerFixtures>({
     { scope: "worker" },
   ],
 
-  // Override the built-in `context` fixture. In test mode every page
-  // gets the token header automatically; in guarded mode the context
-  // is a vanilla browser context so Playwright behaves like a normal
-  // client against the live backend.
-  context: async ({ browser, _viurTestingStatus }, use) => {
-    const ctx: BrowserContext = _viurTestingStatus === null
-      ? await browser.newContext()
-      : await browser.newContext({
-          extraHTTPHeaders: { [TOKEN_HEADER]: _viurTestingStatus.token },
-        })
+  // Override the built-in `context` fixture. In test mode the token is
+  // set once as a cookie on the context, so it rides along on every
+  // request — fetch/XHR AND hard navigations — exactly like a manually
+  // armed browser. In guarded mode the context is a vanilla browser
+  // context so Playwright behaves like a normal client against the live
+  // backend.
+  context: async ({ browser, baseURL, _viurTestingStatus }, use) => {
+    const ctx: BrowserContext = await browser.newContext()
+    if (_viurTestingStatus !== null) {
+      const origin = new URL(
+        baseURL ?? process.env.E2E_BACKEND_URL ?? "http://localhost:8080",
+      ).origin
+      await ctx.addCookies([
+        {
+          name: TOKEN_COOKIE,
+          value: _viurTestingStatus.token,
+          url: origin,
+          sameSite: "Strict",
+          httpOnly: true,
+        },
+      ])
+    }
     await use(ctx)
     await ctx.close()
   },

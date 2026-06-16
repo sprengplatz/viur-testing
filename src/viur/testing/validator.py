@@ -5,11 +5,12 @@ Once :func:`viur.testing.activate` has run, :class:`TokenValidator` is appended
 to ``viur.core.request.Router.requestValidators``. From that point on,
 every incoming request must either:
 
-- target one of the bootstrap endpoints whose path ends in
-  ``/_test/config/status`` or ``/_test/config/finish`` (they need to be
+- target one of the bootstrap endpoints (``/_test/config/status``,
+  ``/_test/config/enter`` or ``/_test/config/finish``) — they need to be
   reachable before a token exists and they re-verify the runtime
-  themselves), or
-- carry a matching ``X-Viur-Test-Token`` header.
+  themselves, or
+- carry a matching ``viur-test-token`` cookie (the canonical transport
+  since 0.5.0; survives hard navigations, unlike the old header).
 
 Anything else is rejected with 403 before any module code runs.
 
@@ -44,7 +45,7 @@ def _is_bootstrap_path(path: str | None, actions: frozenset[str]) -> bool:
     - ``/<renderer>/_test/config/<action>`` — four segments, where
       ``<renderer>`` is a single segment viur-core folds in (typically
       ``json``, ``vi``, ``html``, but any single segment passes — the
-      TokenValidator is the actual access control on tokenless paths).
+      TokenValidator is the actual access control on non-bootstrap paths).
 
     Anything deeper (``/a/b/_test/config/status``) or differently shaped
     (``/_test/config/status/extra``, ``/_test/configX/status``) is
@@ -100,31 +101,19 @@ class ProductionGuardValidator(RequestValidator):
 
 
 class TokenValidator(RequestValidator):
-    """Reject every request that does not carry a matching test token header."""
+    """Reject every request that does not carry a matching test-token cookie."""
 
     name = "TokenValidator"
 
     @staticmethod
     def validate(request: "BrowseHandler") -> tuple[int, str, str] | None:
-        from .constants import BOOTSTRAP_ACTIONS, TOKEN_HEADER  # noqa: PLC0415
+        from .constants import BOOTSTRAP_ACTIONS, TOKEN_COOKIE  # noqa: PLC0415
         from ._test.config import ConfigModule  # noqa: PLC0415
 
         if not ConfigModule.is_active():
             # Shouldn't happen — activate() registers this validator and
             # primes state in lockstep — but if it does, fail closed.
             return 403, "Forbidden", "viur-test: server is not in test mode"
-
-        # Dev-Mirror tokenless browsing: when armed for this (whitelisted,
-        # namespaced) dev process, requests may skip the token entirely. This
-        # only ever opens the swapped-in viur-tests/<namespace> slice — never
-        # the live (default) DB — and only on a dev server. is_dev_server is
-        # re-checked here so a stale-but-armed state cannot open anything in a
-        # non-dev process.
-        if ConfigModule.tokenless_allowed():
-            from viur.core.config import conf  # noqa: PLC0415
-
-            if getattr(conf.instance, "is_dev_server", False):
-                return None
 
         path = getattr(request.request, "path", None)
         if _is_bootstrap_path(path, BOOTSTRAP_ACTIONS):
@@ -138,11 +127,12 @@ class TokenValidator(RequestValidator):
                 "viur-test: no session token issued yet — call /_test/config/status first",
             )
 
-        provided = request.request.headers.get(TOKEN_HEADER)
+        cookies = getattr(request.request, "cookies", None) or {}
+        provided = cookies.get(TOKEN_COOKIE)
         if not provided:
-            return 403, "Forbidden", f"viur-test: missing {TOKEN_HEADER} header"
+            return 403, "Forbidden", f"viur-test: missing {TOKEN_COOKIE} cookie"
 
         if not hmac.compare_digest(provided, active_token):
-            return 403, "Forbidden", f"viur-test: invalid {TOKEN_HEADER}"
+            return 403, "Forbidden", f"viur-test: invalid {TOKEN_COOKIE} cookie"
 
         return None

@@ -14,7 +14,7 @@
  *   test.afterAll(() => callTestModule("userLogin", "teardown"))
  *
  * In **Test Mode** `callTestModule` builds a fresh APIRequestContext
- * with the session token header attached, so the call passes
+ * carrying the session-token cookie, so the call passes
  * viur-testing's TokenValidator. It reads the token from
  * `.auth/token.json` which `globalSetup` wrote.
  *

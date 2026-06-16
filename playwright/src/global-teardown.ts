@@ -19,10 +19,10 @@
  *     })
  */
 
-import { existsSync, readFileSync, unlinkSync } from "node:fs"
+import { existsSync, unlinkSync } from "node:fs"
 
 import { MODE_ENV_VAR } from "./global-setup.js"
-import { finishTestMode, type ServerStatus } from "./test-mode.js"
+import { finishTestMode } from "./test-mode.js"
 import { tokenFilePath } from "./token-storage.js"
 
 export interface GlobalTeardownOptions {
@@ -44,10 +44,9 @@ export function createGlobalTeardown(_opts: GlobalTeardownOptions = {}): () => P
     if (!existsSync(tokenFile)) {
       return
     }
-    const status = JSON.parse(readFileSync(tokenFile, "utf8")) as ServerStatus
     const backendUrl = process.env.E2E_BACKEND_URL ?? "http://localhost:8080"
     try {
-      await finishTestMode({ backendUrl, token: status.token })
+      await finishTestMode({ backendUrl })
     } catch (err) {
       console.warn(`[viur-testing] teardown could not finish session: ${(err as Error).message}`)
     } finally {

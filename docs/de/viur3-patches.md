@@ -84,14 +84,17 @@ erkannt, sodass eine künftige Banner-Änderung in viur-core sauber degradiert.
 Zwei Validatoren werden an die klassenweite Liste des Routers angehängt:
 
 - **`TokenValidator`** — installiert von `activate()` (Dev/Test). Weist jede
-  Nicht-Bootstrap-Anfrage ab, der ein passender `X-Viur-Test-Token`-Header fehlt
-  (konstantzeitiger Vergleich). Die Bootstrap-Pfade `/_test/config/status` +
-  `/_test/config/finish` umgehen ihn, damit der Runner eine Session öffnen kann,
-  bevor eine existiert.
+  Nicht-Bootstrap-Anfrage ab, der ein passendes `viur-test-token`-Cookie fehlt
+  (konstantzeitiger Vergleich). Die Bootstrap-Pfade `/_test/config/status`,
+  `/_test/config/enter` und `/_test/config/finish` umgehen ihn, damit Runner und
+  manuelle Navigation eine Session öffnen können, bevor ein Cookie existiert.
 - **`ProductionGuardValidator`** — installiert von `protect()` in **jeder**
-  Umgebung. Auf einem Nicht-Dev-Server beantwortet er jede Anfrage mit
-  Test-Token-Header mit 403, unabhängig vom Wert; in Dev ist er ein No-op (der
-  `TokenValidator` besitzt die Header-Logik). Siehe [Validatoren](api/validator.md).
+  Umgebung; überwacht weiterhin den Legacy-Header `X-Viur-Test-Token` als
+  Stolperdraht: Auf einem Nicht-Dev-Server beantwortet er jede Anfrage mit
+  diesem Header mit 403, unabhängig vom Wert; in Dev ist er ein No-op. Der
+  Header ist kein gültiger Transport mehr (der `TokenValidator` liest das
+  Cookie), der Guard fängt also nur noch einen versehentlich kopierten Header
+  gegen Produktion ab. Siehe [Validatoren](api/validator.md).
 
 
 ## 6. Closed-System-Allowlist

@@ -149,14 +149,25 @@ def _install_current_request_stub() -> None:
     class _Response:
         def __init__(self) -> None:
             self.headers: dict[str, str] = {}
+            self.cookies_set: list[tuple[str, str, dict]] = []
+            self.cookies_deleted: list[tuple[str, dict]] = []
 
-    class _Request:
+        def set_cookie(self, name: str, value: str, **kwargs) -> None:
+            self.cookies_set.append((name, value, kwargs))
+
+        def delete_cookie(self, name: str, **kwargs) -> None:
+            self.cookies_deleted.append((name, kwargs))
+
+    class _Handler:
         def __init__(self) -> None:
             self.response = _Response()
+            # Mirrors viur-core's BrowseHandler.request (a webob Request):
+            # ConfigModule._set_token_cookie reads ``.scheme`` to decide Secure.
+            self.request = types.SimpleNamespace(scheme="http")
 
     # light-mock's `_Slot` exposes get()/set(); pre-populate it.
     if hasattr(current_mod, "request") and hasattr(current_mod.request, "set"):
-        current_mod.request.set(_Request())
+        current_mod.request.set(_Handler())
 
 
 def _install_transport_stub() -> None:

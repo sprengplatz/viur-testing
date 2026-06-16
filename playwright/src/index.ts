@@ -8,7 +8,7 @@
  */
 
 export {
-  TOKEN_HEADER,
+  TOKEN_COOKIE,
   requireTestMode,
   probeStatusEndpoint,
   finishTestMode,
@@ -55,9 +55,3 @@ export {
   createGlobalTeardown,
   type GlobalTeardownOptions,
 } from "./global-teardown.js"
-
-export {
-  viurTestingTokenFetch,
-  withTokenInjection,
-  type ViurTestingTokenFetchOptions,
-} from "./vite-plugin.js"
