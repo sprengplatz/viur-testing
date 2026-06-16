@@ -64,7 +64,7 @@ from .mirror import arm_tokenless_browsing
 from .protection import protect
 from .runner import ServerStatus, TestModePreflightError, finish, require_test_mode
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 
 __all__ = [
     "DEFAULT_DATABASE",

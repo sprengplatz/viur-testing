@@ -8,8 +8,11 @@ edit_uri: edit/main/docs/
 theme:
   name: material
   language: en
+  logo: assets/logo.svg
+  favicon: assets/favicon.svg
   features:
-    - navigation.instant
+    # navigation.instant is intentionally disabled: it is incompatible
+    # with the mkdocs-static-i18n language switcher contextual link.
     - navigation.tracking
     - navigation.sections
     - navigation.expand
@@ -35,8 +38,14 @@ theme:
 nav:
   - Home: index.md
   - Getting started: getting-started.md
-  - Dev-Mirror Mode: dev-mirror-mode.md
+  - Development Mode: dev-mirror-mode.md
   - Guarded Mode: guarded-mode.md
+  - ViUR3 Monkey Patches: viur3-patches.md
+  # API reference is generated from the (English) Python docstrings and
+  # exists only once. In the German build the de/api/* pages are tiny
+  # redirect stubs that bounce straight to the English page — so a German
+  # reader lands directly on the English API reference, and we avoid
+  # rendering mkdocstrings twice (which would create clashing anchors).
   - API reference:
       - Host API: api/host.md
       - Runner API: api/runner.md
@@ -67,6 +76,30 @@ markdown_extensions:
 
 plugins:
   - search
+  - i18n:
+      docs_structure: folder
+      fallback_to_default: true
+      reconfigure_material: true
+      reconfigure_search: true
+      languages:
+        - locale: en
+          default: true
+          name: English
+          build: true
+        - locale: de
+          name: Deutsch
+          build: true
+          nav_translations:
+            Home: Start
+            Getting started: Erste Schritte
+            Development Mode: Development-Modus
+            Guarded Mode: Guarded-Modus
+            ViUR3 Monkey Patches: ViUR3 Monkey-Patches
+            API reference: API-Referenz
+            Host API: Host-API
+            Runner API: Runner-API
+            Validators: Validatoren
+            Changelog: Änderungshistorie
   - mkdocstrings:
       handlers:
         python:

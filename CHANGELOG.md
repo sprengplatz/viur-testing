@@ -5,72 +5,56 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.4.0] — 2026-06-16
 
-### Changed
+Combined Python + `@spltz/viur-testing` (npm) release. This version unifies
+test-mode activation behind a single env var, adds the **Development mode**
+(live-data mirroring + tokenless browsing), streamlines the
+`viur-testing-init` scaffolder, and ships a bilingual (EN/DE) documentation
+site.
 
-- **BREAKING — single boot env var.** The three server-side boot
-  variables `VIUR_TESTING_ENABLE`, `VIUR_TESTING_NAMESPACE` and
-  `VIUR_TESTING_TOKENLESS` are replaced by one
-  `VIUR_TESTING=<mode>[:<namespace>]` (`mode` = `test` or `dev`;
-  `1`/`true`/`on` alias `test`; unset/`0`/`off`/`false` = off).
-  `dev` mode (= test mode + tokenless browsing) now **requires** a
-  namespace. Migration:
+- **BREAKING (Python) — one boot env var.** `VIUR_TESTING_ENABLE`,
+  `VIUR_TESTING_NAMESPACE` and `VIUR_TESTING_TOKENLESS` collapse into a single
+  `VIUR_TESTING=<mode>[:<namespace>]` (`mode` = `test` or `dev`; `1`/`true`/`on`
+  alias `test`; unset/`0`/`off`/`false` = off). `dev` mode now **requires** a
+  namespace. `setup()` drops the three `*_env_var` params and gains `env_var`
+  (default `VIUR_TESTING`) plus explicit `mode`/`namespace` overrides.
 
-      VIUR_TESTING_ENABLE=1                                   → VIUR_TESTING=1   (or =test)
-      VIUR_TESTING_ENABLE=1 VIUR_TESTING_NAMESPACE=ak         → VIUR_TESTING=test:ak
-      VIUR_TESTING_ENABLE=1 VIUR_TESTING_NAMESPACE=ak \
-        VIUR_TESTING_TOKENLESS=1                              → VIUR_TESTING=dev:ak
+      VIUR_TESTING_ENABLE=1                            → VIUR_TESTING=test
+      …_ENABLE=1 …_NAMESPACE=ak                        → VIUR_TESTING=test:ak
+      …_ENABLE=1 …_NAMESPACE=ak …_TOKENLESS=1          → VIUR_TESTING=dev:ak
 
-  `setup()` drops `enable_env_var`, `namespace_env_var` and
-  `tokenless_env_var`; it gains `env_var` (default `VIUR_TESTING`) plus
-  explicit `mode`/`namespace` overrides.
+- **Development mode (Python).** New `viur-mirror` console script seeds a
+  per-developer **namespace** of `viur-tests` from the live `(default)`
+  database — read-only source client, viur-core secret/system kinds excluded
+  (`viur-conf` incl. hmacKey, `viur-session`, `viur-securitykey`,
+  `viur-relations`, `file`/`file_rootNode`/`viur-blob-locks`), keys **and**
+  relations remapped onto the target partition, PIN-gated, never writes
+  `(default)`. Booting `VIUR_TESTING=dev:<ns>` then PIN-arms **tokenless
+  browsing** of that slice for whitelisted dev servers
+  (`setup(tokenless_app_ids=…)` / `arm_tokenless_browsing(...)`), so a full dev
+  environment incl. Admin works without the `X-Viur-Test-Token` header — only
+  ever on the `viur-tests` slice.
 
-### Added
+- **BREAKING (npm) — streamlined `viur-testing-init`.** The scaffolder no
+  longer prompts for a mode; it always scaffolds a **Test Mode** suite (the
+  `--mode`/`--guarded` flags and the Guarded-Mode preset are gone — Guarded
+  Mode remains as a runtime auto-detect). It auto-locates the project root by
+  walking up for a `deploy/` directory and proposes `<root>/testing/e2e`
+  (confirmable/overridable), and additionally generates the backend test-API
+  package `testing/api/__init__.py` + an example `testing/api/user.py`
+  (`UserTestApi` with `setup`/`teardown`).
 
-- **Dev-Mirror mode** (Python side) — removes the "my `viur-tests`
-  slice is empty, so I run a second server against the live data"
-  friction. Two parts:
-  - **Per-namespace seeding** — the `viur-mirror` console script copies the
-    live `(default)` database into a developer-chosen **namespace** of the
-    `viur-tests` database, via the regular `datastore` client (`database=` +
-    `namespace=`). Reads `(default)` through a **read-only** client
-    (`mirror.ReadOnlyClient`) and excludes viur-core secret/system kinds
-    (`viur-conf` incl. hmacKey, `viur-session`, `viur-securitykey`,
-    `viur-relations`, `file`/`file_rootNode`/`viur-blob-locks`), so secrets
-    never reach the test slice. PIN-gated. Writing into `(default)` is a hard
-    guard with no override.
-  - **Tokenless browsing** — boot in **dev mode** (`VIUR_TESTING=dev:<ns>`)
-    and, before the real server boots, a fresh 6-digit PIN arms tokenless
-    browsing for a whitelisted dev server. Requests may then skip the
-    `X-Viur-Test-Token` header (`ConfigModule.tokenless_allowed()` +
-    `is_dev_server`, re-checked per request) — only ever opening the
-    `viur-tests` slice, never `(default)`.
-  - **Server-side PIN challenge** (`viur.testing.pin`), the Python analog
-    of the runner-side Guarded-Mode PIN: fresh per use, one try, no
-    persisted ACK, **no TTY → hard abort** (do not set the env var / run
-    the script in CI).
-  - New public surface: `viur.testing.arm_tokenless_browsing(...)`; new
-    `setup()` param `tokenless_app_ids`. Dev mode is selected via the
-    single `VIUR_TESTING=dev:<ns>` env var (see **Changed** below).
+- **npm — dependency refresh.** `vite` peer range widened to
+  `^5 || ^6 || ^7 || ^8`; dev toolchain bumped (TypeScript 6, `@types/node` 25,
+  `@playwright/test` 1.61, Vite 8).
 
-### Note
+- **Docs — bilingual site (EN/DE).** Added `mkdocs-static-i18n` (folder
+  structure, Material language switcher); API reference stays English
+  (generated from docstrings) with the German nav redirecting to it; the
+  *Dev-Mirror Mode* page is renamed **Development Mode**; SVG logo + green
+  favicon added.
 
-- Keys are remapped onto the target partition: each entity's own key **and**
-  every key-valued property (relations), recursively through lists and embedded
-  entities, are rewritten to `database=viur-tests` / `namespace=<target>`. This
-  is mandatory — a copied entity may not reference keys in the source
-  `(default)` database, so Datastore rejects a verbatim copy; as a side effect
-  relations resolve within the copied slice. (The managed `gcloud`
-  export/import cannot remap namespaces at all — `--namespace-ids` is a filter,
-  not a destination — so a direct client copy is the only way to reach a
-  per-developer namespace.) Boot the dev server with
-  `VIUR_TESTING=dev:<your-ns>` to read your slice.
-- Seeding deliberately **reads the live `(default)` database** (read-only).
-  That is a conscious, documented relaxation of the "never reads
-  production" half of the guarantee. Copying live data into a test slice
-  has data-protection implications — review the export exclude list
-  (`--exclude`) for PII before running.
 
 ## [0.3.0] — 2026-05-28
 
@@ -477,7 +461,7 @@ in:
    module instance is silently skipped. The host-side wiring
    registers `TestModule` as a *class*, not as an instance.
 
-[Unreleased]: https://github.com/sprengplatz/viur-testing/compare/v0.3.0-npm...HEAD
+[0.4.0]: https://github.com/sprengplatz/viur-testing/compare/v0.3.0-npm...v0.4.0
 [0.3.0]: https://github.com/sprengplatz/viur-testing/releases/tag/v0.3.0-npm
 [0.2.0]: https://github.com/sprengplatz/viur-testing/releases/tag/v0.2.0
 [0.1.0]: https://github.com/sprengplatz/viur-testing/releases/tag/v0.1.0

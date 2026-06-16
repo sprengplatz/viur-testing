@@ -1,6 +1,6 @@
 {
   "name": "@spltz/viur-testing",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Playwright fixtures, global setup/teardown, helpers and a Vite plugin for projects driven by viur-testing.",
   "license": "MIT",
   "author": "Andreas H. Kelch",
