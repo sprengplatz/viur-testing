@@ -35,6 +35,12 @@ test = [
     "pytest-cov~=5.0",
     "coverage[toml]~=7.0",
     "spltz-viur-light-mock>=0.1",
+    # Real google-cloud-datastore is needed for the CLI/mirror tests, which
+    # build genuine datastore.Entity/Key objects (the re-keying logic operates
+    # on them). In production it arrives transitively via viur-core; the test
+    # env stubs viur-core, so it must be declared here. Named-database support
+    # landed in 2.18.
+    "google-cloud-datastore>=2.18",
 ]
 docs = [
     "mkdocs-material~=9.5",

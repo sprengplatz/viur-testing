@@ -32,7 +32,10 @@ jobs:
           # Pull only the test extras (pytest, pytest-cov, spltz-viur-light-mock).
           # ``spltz-viur-light-mock`` provides the viur.core stand-ins via its
           # pytest11 entry-point, so the real viur-core is never needed.
-          python -m pip install pytest pytest-cov 'coverage[toml]' spltz-viur-light-mock
+          # ``google-cloud-datastore`` is required by the CLI/mirror tests,
+          # which construct real datastore.Entity/Key objects (normally pulled
+          # in transitively by viur-core, which is mocked here).
+          python -m pip install pytest pytest-cov 'coverage[toml]' spltz-viur-light-mock google-cloud-datastore
 
       - name: Run tests
         run: pytest
