@@ -39,7 +39,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install --no-deps -e .
-          python -m pip install pytest pytest-cov 'coverage[toml]' spltz-viur-light-mock
+          python -m pip install pytest pytest-cov 'coverage[toml]' spltz-viur-light-mock google-cloud-datastore
 
       - name: Tests
         run: pytest
