@@ -73,7 +73,7 @@ jobs:
       - name: Install + build
         working-directory: playwright
         run: |
-          npm ci
+          npm i
           npm run build
 
       - name: Pack tarball
@@ -125,7 +125,7 @@ jobs:
       - name: Install + build (clean room)
         working-directory: playwright
         run: |
-          npm ci
+          npm i
           npm run build
 
       - name: Publish
