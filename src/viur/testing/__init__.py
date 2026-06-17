@@ -64,7 +64,7 @@ from .mode import parse_spec
 from .protection import protect
 from .runner import ServerStatus, TestModePreflightError, finish, require_test_mode
 
-__version__ = "0.5.0"
+__version__ = "0.5.1"
 
 __all__ = [
     "DEFAULT_DATABASE",

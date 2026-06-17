@@ -5,6 +5,20 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.1] — 2026-06-17
+
+Python package only — `@spltz/viur-testing` (npm) is unchanged and stays at
+0.5.0; it reads the token from `/_test/config/status` regardless of how the
+token is generated.
+
+- **Deterministic per-day session token.** The token is now derived from the
+  session identity (database, namespace, project id) plus the current UTC day,
+  so it is identical all day and across server restarts, `finish` calls and
+  re-issues, and rotates at UTC midnight. A cookie armed once via
+  `/_test/config/enter` (or set by the Playwright fixtures) therefore stays
+  valid for the whole day. It is not a secret — `/_test/config/status` hands it
+  out freely; the production guard + dev-server gate remain the real protection.
+
 ## [0.5.0] — 2026-06-16
 
 Combined Python + `@spltz/viur-testing` (npm) release. Switches the test-token
@@ -20,13 +34,6 @@ tokenless dev mode and the Vite token plugin.
   the token still fully enforced. npm: the fixtures set the cookie via
   `context.addCookies`; `authenticatedApi`/`backendApi` send it as a `Cookie`
   header; `finishTestMode`/`finish()` send no token (bootstrap endpoint).
-- **Deterministic per-day token.** The session token is now derived from the
-  session identity (database, namespace, project) plus the current UTC day, so
-  it is identical all day and across server restarts / `finish` / re-issues, and
-  rotates at UTC midnight. A cookie armed once via `/_test/config/enter` (or set
-  by the fixtures) stays valid for the whole day. It is not a secret — `status`
-  hands it out freely; the production guard + dev-server gate remain the
-  protection.
 - **BREAKING — single-value env var.** `VIUR_TESTING=1` (or `true`/`on`) = on,
   default namespace; any other value is the namespace verbatim
   (`VIUR_TESTING=ak`). The former `<mode>[:<namespace>]` grammar and the
@@ -523,6 +530,7 @@ in:
    module instance is silently skipped. The host-side wiring
    registers `TestModule` as a *class*, not as an instance.
 
+[0.5.1]: https://github.com/sprengplatz/viur-testing/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/sprengplatz/viur-testing/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/sprengplatz/viur-testing/compare/v0.3.0-npm...v0.4.0
 [0.3.0]: https://github.com/sprengplatz/viur-testing/releases/tag/v0.3.0-npm
