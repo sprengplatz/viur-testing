@@ -20,6 +20,13 @@ tokenless dev mode and the Vite token plugin.
   the token still fully enforced. npm: the fixtures set the cookie via
   `context.addCookies`; `authenticatedApi`/`backendApi` send it as a `Cookie`
   header; `finishTestMode`/`finish()` send no token (bootstrap endpoint).
+- **Deterministic per-day token.** The session token is now derived from the
+  session identity (database, namespace, project) plus the current UTC day, so
+  it is identical all day and across server restarts / `finish` / re-issues, and
+  rotates at UTC midnight. A cookie armed once via `/_test/config/enter` (or set
+  by the fixtures) stays valid for the whole day. It is not a secret — `status`
+  hands it out freely; the production guard + dev-server gate remain the
+  protection.
 - **BREAKING — single-value env var.** `VIUR_TESTING=1` (or `true`/`on`) = on,
   default namespace; any other value is the namespace verbatim
   (`VIUR_TESTING=ak`). The former `<mode>[:<namespace>]` grammar and the

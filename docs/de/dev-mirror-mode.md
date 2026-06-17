@@ -36,6 +36,10 @@ dann browst du `http://localhost:8080/...` ganz normal — harte Navigation,
 Reloads, server-gerenderte Seiten: das Cookie wird automatisch angehängt und der
 Token bleibt erzwungen.
 
+Der Token ist **pro UTC-Tag deterministisch**: er bleibt den ganzen Tag und über
+Server-Neustarts hinweg gleich — du schaltest das Cookie also einmal morgens
+scharf und es funktioniert bis Mitternacht (am nächsten Tag rotiert es).
+
 ## Namespace befüllen — `viur-mirror`
 
 Das `viur-mirror`-Script kopiert Kinds aus einer Datenbank in deinen

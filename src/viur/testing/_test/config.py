@@ -20,9 +20,10 @@ swap; the request validator reads :meth:`ConfigModule.current_token`
 to decide whether to let a request through.
 """
 
+import base64
+import datetime
 import hashlib
 import json
-import secrets
 import typing as t
 
 from viur.core import Module, current
@@ -256,20 +257,54 @@ class ConfigModule(Module):
         return transport.__client__.key(TOKEN_KIND, TOKEN_ENTITY_NAME)
 
     @classmethod
+    def _current_day(cls) -> str:
+        """UTC calendar day as ``YYYY-MM-DD``. Isolated so tests can pin it."""
+        return datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d")
+
+    @classmethod
+    def _compute_daily_token(cls) -> str:
+        """Deterministic per-day session token.
+
+        Identical for the whole UTC day and stable across server restarts,
+        :meth:`finish` calls and re-issues — so a cookie armed once via
+        ``/_test/config/enter`` keeps working all day; it rotates at UTC
+        midnight. Derived from the session identity (database, namespace,
+        project id) plus the day, so distinct slices and distinct days never
+        share a token.
+
+        Not a secret: ``/_test/config/status`` already hands the token to any
+        local caller, and the production guard + dev-server gate remain the
+        real protection. Determinism is the point — see :meth:`_read_or_create_token`.
+        """
+        material = "\0".join([
+            "viur-testing-daily-token-v1",
+            cls._database or "",
+            cls._namespace or "",
+            cls._project_id or "",
+            cls._current_day(),
+        ])
+        digest = hashlib.sha256(material.encode("utf-8")).digest()
+        return base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
+
+    @classmethod
     def _read_or_create_token(cls) -> str:
-        """Return the token from the DB, creating it on first call."""
+        """Return today's deterministic token, persisting it in the test DB.
+
+        The stored entity is (re)written whenever it is missing or holds a
+        different value — e.g. on the first call of a new day, or after a
+        stale entity from a previous day — so the DB always mirrors the
+        active token and :meth:`finish` can report ``had_token`` correctly.
+        """
         from google.cloud import datastore as gcds  # noqa: PLC0415
         from viur.core.db import transport  # noqa: PLC0415
 
+        token = cls._compute_daily_token()
         key = cls._token_key()
         existing = transport.__client__.get(key)
-        if existing is not None and isinstance(existing.get(TOKEN_PROPERTY), str):
-            return existing[TOKEN_PROPERTY]
-
-        token = secrets.token_urlsafe(32)
-        entity = gcds.Entity(key=key)
-        entity[TOKEN_PROPERTY] = token
-        transport.__client__.put(entity)
+        if existing is None or existing.get(TOKEN_PROPERTY) != token:
+            entity = gcds.Entity(key=key)
+            entity[TOKEN_PROPERTY] = token
+            transport.__client__.put(entity)
         return token
 
     @classmethod

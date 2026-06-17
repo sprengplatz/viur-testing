@@ -37,6 +37,10 @@ From then on you browse `http://localhost:8080/...` normally — hard navigation
 reloads, server-rendered pages: the cookie is attached automatically and the
 token stays enforced. No PIN, no browser extension, no second proxy port.
 
+The token is **deterministic per UTC day**: it stays the same all day and across
+server restarts, so you arm the cookie once in the morning and it keeps working
+until midnight (it rotates the next day).
+
 ## Seed your namespace — `viur-mirror`
 
 The `viur-mirror` console script copies kinds from a database into your

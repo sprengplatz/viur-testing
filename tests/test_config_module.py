@@ -360,16 +360,71 @@ def test_status_is_idempotent(client_active):
     assert first["token"] == second["token"]
 
 
-def test_status_reuses_existing_db_entity(client_active):
+def test_status_overwrites_stale_token_entity(client_active):
+    """The token is deterministic per day, so a stale entity (e.g. from a
+    previous day) is overwritten with today's value — the DB never wins."""
     import json
 
     entity = _FakeEntity(key=_FakeKey("viur-tests", "auth-token"))
-    entity["token"] = "from-db"
+    entity["token"] = "from-a-previous-day"
     client_active.put(entity)
 
     module = ConfigModule(moduleName="config", modulePath="_test/config")
     result = json.loads(module.status())
-    assert result["token"] == "from-db"
+    assert result["token"] != "from-a-previous-day"
+    assert result["token"] == ConfigModule._compute_daily_token()
+    key = _FakeKey("viur-tests", "auth-token")
+    assert client_active._store[key]["token"] == result["token"]
+
+
+# ---------------------------------------------------------------------------
+# Deterministic per-day token
+# ---------------------------------------------------------------------------
+
+
+def test_daily_token_is_stable_within_a_day(monkeypatch):
+    monkeypatch.setattr(ConfigModule, "_current_day", classmethod(lambda cls: "2026-06-17"))
+    ConfigModule.set_active(database="viur-tests", project_id="p", namespace="ak")
+    first = ConfigModule._compute_daily_token()
+    second = ConfigModule._compute_daily_token()
+    assert first == second
+
+
+def test_daily_token_rotates_across_days(monkeypatch):
+    ConfigModule.set_active(database="viur-tests", project_id="p", namespace="ak")
+    monkeypatch.setattr(ConfigModule, "_current_day", classmethod(lambda cls: "2026-06-17"))
+    day1 = ConfigModule._compute_daily_token()
+    monkeypatch.setattr(ConfigModule, "_current_day", classmethod(lambda cls: "2026-06-18"))
+    day2 = ConfigModule._compute_daily_token()
+    assert day1 != day2
+
+
+def test_daily_token_differs_per_namespace(monkeypatch):
+    monkeypatch.setattr(ConfigModule, "_current_day", classmethod(lambda cls: "2026-06-17"))
+    ConfigModule.set_active(database="viur-tests", project_id="p", namespace="alice")
+    alice = ConfigModule._compute_daily_token()
+    ConfigModule.reset()
+    ConfigModule.set_active(database="viur-tests", project_id="p", namespace="bob")
+    bob = ConfigModule._compute_daily_token()
+    assert alice != bob
+
+
+def test_current_day_is_iso_utc_date():
+    import re
+
+    assert re.fullmatch(r"\d{4}-\d{2}-\d{2}", ConfigModule._current_day())
+
+
+def test_finish_then_status_yields_same_token_same_day(client_active):
+    """After finish() deletes the entity, the next status() re-issues the
+    identical token for the same day — so a cookie stays valid all day."""
+    import json
+
+    module = ConfigModule(moduleName="config", modulePath="_test/config")
+    before = json.loads(module.status())["token"]
+    module.finish()
+    after = json.loads(module.status())["token"]
+    assert before == after
 
 
 def test_status_refuses_when_dev_server_is_false(client_active, conf_instance):
