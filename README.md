@@ -33,9 +33,7 @@ server **and** the runner agree they are talking to the test instance.
    does not match.
 
 The session token is the source of truth in the test database itself
-(kind `viur-tests`, entity `auth-token`). The **server side never writes
-the token to disk** — App Engine file-system writes are not needed, no
-state survives a server restart.
+(kind `viur-tests`, entity `auth-token`).
 
 The runner side does cache a copy: the Playwright globalSetup persists
 the parsed `/_test/config/status` response under `.auth/token.json`
